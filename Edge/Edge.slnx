@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="Edge.BFF.Mobile/Edge.BFF.Mobile.csproj" />
+  <Project Path="Edge.BFF.Web/Edge.BFF.Web.csproj" />
+  <Project Path="Edge.Gateway/Edge.Gateway.csproj" />
+</Solution>

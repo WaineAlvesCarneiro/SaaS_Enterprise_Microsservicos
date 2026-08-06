@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="Estoque.API/Estoque.API.csproj" />
+  <Project Path="Estoque.Application/Estoque.Application.csproj" />
+  <Project Path="Estoque.Contracts/Estoque.Contracts.csproj" />
+  <Project Path="Estoque.Domain/Estoque.Domain.csproj" />
+  <Project Path="Estoque.Infrastructure/Estoque.Infrastructure.csproj" />
+  <Project Path="Estoque.Tests/Estoque.Tests.csproj" />
+</Solution>

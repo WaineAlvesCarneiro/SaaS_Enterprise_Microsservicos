@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'saas_apis'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets:
+          - 'auth_api:8086'
+          - 'empresa_api:8086'
+          - 'pessoas_api:8086'
+          - 'produtos_api:8086'
+          - 'pedidos_api:8086'
+          - 'estoque_api:8086'
+          - 'faturamento_api:8086'

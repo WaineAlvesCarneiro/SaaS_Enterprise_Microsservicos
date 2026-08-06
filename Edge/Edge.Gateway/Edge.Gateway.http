@@ -1,0 +1,6 @@
+@Edge.Gateway_HostAddress = http://localhost:5001
+
+GET {{Edge.Gateway_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

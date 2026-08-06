@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="Empresa.API/Empresa.API.csproj" />
+  <Project Path="Empresa.Application/Empresa.Application.csproj" />
+  <Project Path="Empresa.Contracts/Empresa.Contracts.csproj" />
+  <Project Path="Empresa.Domain/Empresa.Domain.csproj" />
+  <Project Path="Empresa.Infrastructure/Empresa.Infrastructure.csproj" />
+  <Project Path="Empresa.Tests/Empresa.Tests.csproj" />
+</Solution>

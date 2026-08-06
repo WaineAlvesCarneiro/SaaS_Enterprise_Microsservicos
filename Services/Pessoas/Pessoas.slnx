@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="Pessoas.API/Pessoas.API.csproj" />
+  <Project Path="Pessoas.Application/Pessoas.Application.csproj" />
+  <Project Path="Pessoas.Contracts/Pessoas.Contracts.csproj" />
+  <Project Path="Pessoas.Domain/Pessoas.Domain.csproj" />
+  <Project Path="Pessoas.Infrastructure/Pessoas.Infrastructure.csproj" />
+  <Project Path="Pessoas.Tests/Pessoas.Tests.csproj" />
+</Solution>

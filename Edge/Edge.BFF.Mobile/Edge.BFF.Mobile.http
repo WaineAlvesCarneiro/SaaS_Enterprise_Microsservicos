@@ -1,0 +1,6 @@
+@Edge.BFF.Mobile_HostAddress = http://localhost:5228
+
+GET {{Edge.BFF.Mobile_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

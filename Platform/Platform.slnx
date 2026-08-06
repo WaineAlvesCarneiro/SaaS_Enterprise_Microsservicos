@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Platform.Messaging/Platform.Messaging.csproj" />
+  <Project Path="Platform.Multitenancy/Platform.Multitenancy.csproj" />
+  <Project Path="Platform.Observability/Platform.Observability.csproj" />
+  <Project Path="Platform.Shared/Platform.Shared.csproj" />
+</Solution>

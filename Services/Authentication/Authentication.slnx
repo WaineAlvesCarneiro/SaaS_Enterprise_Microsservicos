@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="Authentication.API/Authentication.API.csproj" />
+  <Project Path="Authentication.Application/Authentication.Application.csproj" />
+  <Project Path="Authentication.Contracts/Authentication.Contracts.csproj" />
+  <Project Path="Authentication.Domain/Authentication.Domain.csproj" />
+  <Project Path="Authentication.Infrastructure/Authentication.Infrastructure.csproj" />
+  <Project Path="Authentication.Tests/Authentication.Tests.csproj" />
+</Solution>

@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  # ===============================================================
+  # FERRAMENTAS DE OBSERVABILIDADE & MONITORAMENTO
+  # (Conectam-se à rede 'infra_net' criada na Fase 1)
+  # ===============================================================
+  seq:
+    image: datalust/seq:latest
+    container_name: enterprise-seq
+    restart: unless-stopped
+    environment:
+      - ACCEPT_EULA=Y
+    ports:
+      - "5341:80"
+    networks:
+      - infra_net
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: enterprise-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    networks:
+      - infra_net
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: enterprise-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - infra_net
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: enterprise-jaeger
+    restart: unless-stopped
+    ports:
+      - "16686:16686"
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+    networks:
+      - infra_net
+
+# ===============================================================
+# REDE EXTERNA COMPARTILHADA (Criada na Fase 1)
+# ===============================================================
+networks:
+  infra_net:
+    external: true
+    name: infra_net
