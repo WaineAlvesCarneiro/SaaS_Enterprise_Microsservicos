@@ -111,9 +111,7 @@ Write-Host "Iniciando Fase 5: Core da Authentication..." -ForegroundColor Cyan
 
 $coreFiles = @()
 
-# =============================================================================
 # USER ENTITY
-# =============================================================================
 
 $userEntity = @'
 namespace Authentication.Domain.Entities;
@@ -121,6 +119,8 @@ namespace Authentication.Domain.Entities;
 public class User
 {
     public Guid Id { get; set; }
+
+    public Guid? TenantId { get; set; }
 
     public string Name { get; set; } = string.Empty;
 
@@ -132,8 +132,7 @@ public class User
 
     public bool FirstAccess { get; set; } = true;
 
-    public DateTime CreatedAt { get; set; }
-        = DateTime.UtcNow;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime? UpdatedAt { get; set; }
 
@@ -150,9 +149,7 @@ $coreFiles += @{
     Content = $userEntity
 }
 
-# =============================================================================
 # ROLE ENTITY
-# =============================================================================
 
 $roleEntity = @'
 namespace Authentication.Domain.Entities;
@@ -163,8 +160,9 @@ public class Role
 
     public string Name { get; set; } = string.Empty;
 
-    public ICollection<User> Users { get; set; }
-        = new List<User>();
+    public ICollection<User> Users { get; set; } = new List<User>();
+
+    public ICollection<Permission> Permissions { get; set; } = new List<Permission>();
 }
 '@
 
@@ -173,9 +171,27 @@ $coreFiles += @{
     Content = $roleEntity
 }
 
-# =============================================================================
+# PERMISSION ENTITY
+
+$permissionEntity = @'
+namespace Authentication.Domain.Entities;
+
+public class Permission
+{
+    public Guid Id { get; set; }
+
+    public string Name { get; set; } = string.Empty;
+
+    public ICollection<Role> Roles { get; set; } = new List<Role>();
+}
+'@
+
+$coreFiles += @{
+    Path = Join-Path $rootPath "Authentication.Domain\Entities\Permission.cs"
+    Content = $permissionEntity
+}
+
 # REFRESH TOKEN ENTITY
-# =============================================================================
 
 $refreshTokenEntity = @'
 namespace Authentication.Domain.Entities;
@@ -192,8 +208,7 @@ public class RefreshToken
 
     public bool Revoked { get; set; }
 
-    public DateTime CreatedAt { get; set; }
-        = DateTime.UtcNow;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime? RevokedAt { get; set; }
 
@@ -206,20 +221,16 @@ $coreFiles += @{
     Content = $refreshTokenEntity
 }
 
-# =============================================================================
 # TOKEN SERVICE INTERFACE
-# =============================================================================
 
 $tokenInterface = @'
+using Authentication.Domain.Entities;
+
 namespace Authentication.Application.Interfaces;
 
 public interface ITokenService
 {
-    string GenerateToken(
-        Guid userId,
-        string email,
-        string role,
-        bool firstAccess);
+    string GenerateToken(User user);
 }
 '@
 
@@ -228,9 +239,7 @@ $coreFiles += @{
     Content = $tokenInterface
 }
 
-# =============================================================================
 # PASSWORD HASHER INTERFACE
-# =============================================================================
 
 $passwordHasherInterface = @'
 namespace Authentication.Application.Interfaces;
@@ -248,9 +257,7 @@ $coreFiles += @{
     Content = $passwordHasherInterface
 }
 
-# =============================================================================
 # VALIDATION BEHAVIOR
-# =============================================================================
 
 $validationBehavior = @'
 using FluentValidation;
@@ -293,7 +300,9 @@ public sealed class ValidationBehavior<TRequest, TResponse>
                     context,
                     cancellationToken);
 
-            failures.AddRange(result.Errors);
+            failures.AddRange(
+                result.Errors.Where(x => x != null)
+            );
         }
 
         if (failures.Count > 0)
@@ -333,9 +342,7 @@ foreach ($file in $coreFiles) {
     Write-Host "Arquivo criado: $($file.Path)" -ForegroundColor Green
 }
 
-# =============================================================================
 # BUILD
-# =============================================================================
 
 Write-Host ""
 Write-Host "Validando build da solution Authentication..." -ForegroundColor Yellow

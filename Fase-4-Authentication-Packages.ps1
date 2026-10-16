@@ -3,6 +3,13 @@
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+dotnet --info | Out-Null
+
+if ($LASTEXITCODE -ne 0)
+{
+    throw "SDK .NET nao esta disponivel."
+}
+
 $servicePath = Join-Path $PSScriptRoot "Servicos\Authentication"
 $solutionPath = Join-Path $servicePath "Authentication.slnx"
 
@@ -69,6 +76,36 @@ function Ensure-Package {
     Invoke-DotNet -Arguments $arguments
 }
 
+function Remove-Package {
+
+    param(
+        [string]$Project,
+        [string]$Package
+    )
+
+    [xml]$projectXml =
+        Get-Content -LiteralPath $Project -Raw
+
+    $packageReference =
+        $projectXml.SelectNodes("//PackageReference") |
+        Where-Object {
+            $_.Include -eq $Package
+        } |
+        Select-Object -First 1
+
+    if ($packageReference)
+    {
+        Write-Host "Removendo pacote $Package..." -ForegroundColor Yellow
+
+        Invoke-DotNet -Arguments @(
+            "remove",
+            $Project,
+            "package",
+            $Package
+        )
+    }
+}
+
 function Ensure-DotNetEf {
     # Assegura que dotnet esta no PATH; tenta adicionar instalacao local feita pela Fase-3
     if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
@@ -121,13 +158,48 @@ function Ensure-DotNetEf {
     }
 
     $installedEfVersion = $versionMatch.Groups[1].Value
-    $installedMajor = [int](([regex]::Match($installedEfVersion, '^(\d+)')).Groups[1].Value)
-    if ($installedMajor -ne $efMajor) {
-        Write-Host "Aviso: versao do dotnet-ef instalada ($installedEfVersion) tem major diferente do TargetFramework ($efMajor)." -ForegroundColor Yellow
+    $installedMajor =
+    [int](([regex]::Match($installedEfVersion,'^(\d+)')).Groups[1].Value)
+
+    if ($installedMajor -ne $efMajor)
+    {
+        Write-Host "Atualizando dotnet-ef para a major version correta..." -ForegroundColor Yellow
+
+        Invoke-DotNet -Arguments @(
+            "tool",
+            "update",
+            "--global",
+            "dotnet-ef",
+            "--version",
+            $efPackageVersion
+        )
+
+        $versionOutput = & dotnet ef --version 2>&1
+        $versionText = ($versionOutput -join ' ')
+        $versionMatch = [regex]::Match($versionText,'(\d+\.\d+\.\S+)')
+
+        if (-not $versionMatch.Success)
+        {
+            throw "Nao foi possivel obter a versao do dotnet-ef."
+        }
+
+        $installedEfVersion = $versionMatch.Groups[1].Value
+
+        $installedMajor =
+            [int](([regex]::Match($installedEfVersion,'^(\d+)')).Groups[1].Value)
+
+        if ($installedMajor -ne $efMajor)
+        {
+            throw "Nao foi possivel alinhar a major version do dotnet-ef."
+        }
     }
+    Write-Host "dotnet-ef alinhado para a major version $efMajor" -ForegroundColor Green
 
     Write-Host "dotnet-ef validado: $installedEfVersion" -ForegroundColor Green
-    return @{ ToolVersion = $installedEfVersion; PackageVersion = $efPackageVersion }
+    return [PSCustomObject]@{
+        ToolVersion    = $installedEfVersion
+        PackageVersion = $efPackageVersion
+    }
 }
 
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
@@ -148,6 +220,12 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
 if (-not (Test-Path $solutionPath)) {
     throw "Solution nao encontrada: $solutionPath. Execute e valide a Fase 3 antes da Fase 4."
 }
+if ([System.IO.Path]::GetExtension($solutionPath) -ne ".slnx")
+{
+    throw "Solution invalida. Esperado .slnx."
+}
+Write-Host "Solution detectada: $solutionPath" `
+    -ForegroundColor Green
 
 foreach ($project in $projectPaths.Values) {
     if (-not (Test-Path $project)) {
@@ -155,8 +233,27 @@ foreach ($project in $projectPaths.Values) {
     }
 }
 
+[xml]$testProjectXml = Get-Content $projectPaths.Tests -Raw
+
+$usingNode = $testProjectXml.SelectSingleNode("//ItemGroup/Using[@Include='Xunit']")
+
+if ($usingNode) {
+    $parentGroup = $usingNode.ParentNode
+    $null = $parentGroup.RemoveChild($usingNode)
+
+    if (-not $parentGroup.HasChildNodes -or ($parentGroup.ChildNodes.Count -eq 0)) {
+        $null = $parentGroup.ParentNode.RemoveChild($parentGroup)
+    }
+
+    $testProjectXml.Save($projectPaths.Tests)
+    Write-Host "Using Xunit removido do projeto de testes." -ForegroundColor Yellow
+}
+
 Write-Host "Iniciando Fase 4: pacotes da Authentication..." -ForegroundColor Cyan
 
+Remove-Package `
+    -Project $projectPaths.Tests `
+    -Package "xunit"
 $efInfo = Ensure-DotNetEf
 $efVersion = $efInfo.ToolVersion
 $efPackageVersion = $efInfo.PackageVersion
@@ -164,10 +261,9 @@ $efPackageVersion = $efInfo.PackageVersion
 $packages = @(
     @{ Project = $projectPaths.Application; Package = "MediatR" },
     @{ Project = $projectPaths.Application; Package = "FluentValidation" },
-    @{ Project = $projectPaths.Application; Package = "FluentValidation.DependencyInjectionExtensions" },
 
     @{ Project = $projectPaths.Infrastructure; Package = "Microsoft.EntityFrameworkCore.SqlServer"; Version = $efPackageVersion },
-    @{ Project = $projectPaths.Infrastructure; Package = "Microsoft.EntityFrameworkCore.Design"; Version = $efPackageVersion },
+    @{ Project = $projectPaths.Infrastructure; Package = "Microsoft.EntityFrameworkCore.Design"; Version = $efPackageVersion},
     @{ Project = $projectPaths.Infrastructure; Package = "BCrypt.Net-Next" },
     @{ Project = $projectPaths.Infrastructure; Package = "RabbitMQ.Client" },
     @{ Project = $projectPaths.Infrastructure; Package = "System.IdentityModel.Tokens.Jwt" },

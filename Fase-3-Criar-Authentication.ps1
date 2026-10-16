@@ -9,6 +9,7 @@ $serviceName = "Authentication"
 $servicePath = Join-Path $servicesPath $serviceName
 
 function Invoke-DotNet {
+
     param(
         [Parameter(Mandatory)]
         [string[]]$Arguments
@@ -19,6 +20,40 @@ function Invoke-DotNet {
     if ($LASTEXITCODE -ne 0) {
         throw "Falha ao executar: dotnet $($Arguments -join ' ')"
     }
+}
+
+function Ensure-ProjectReference {
+
+    param(
+        [string]$Project,
+        [string]$Reference
+    )
+
+    $refs = dotnet list $Project reference
+
+    if ($LASTEXITCODE -ne 0)
+    {
+        throw "Falha ao listar referencias do projeto: $Project"
+    }
+
+    $referenceName = [System.IO.Path]::GetFileName($Reference)
+
+    if ($refs -notmatch [regex]::Escape($referenceName))
+    {
+        Invoke-DotNet -Arguments @(
+            "add",
+            $Project,
+            "reference",
+            $Reference
+        )
+    }
+}
+
+dotnet --info | Out-Null
+
+if ($LASTEXITCODE -ne 0)
+{
+    throw "SDK .NET nao esta disponivel."
 }
 
 function Get-LatestStableSdk {
@@ -78,8 +113,14 @@ try {
             "new",
             "sln",
             "-n",
-            $serviceName
+            $serviceName,
+            "--format",
+            "slnx"
         )
+    }
+    if (-not (Test-Path $solutionFile))
+    {
+        throw "Falha ao criar a solution."
     }
 
     $projects = @(
@@ -132,12 +173,22 @@ try {
 
     foreach ($projectFile in $projectFiles) {
 
-        Invoke-DotNet -Arguments @(
-            "sln",
-            $solutionFile,
-            "add",
-            $projectFile
-        )
+        $projectName =
+            [System.IO.Path]::GetFileNameWithoutExtension($projectFile)
+
+        $alreadyAdded =
+            (& dotnet sln $solutionFile list) |
+            Where-Object { $_ -match [regex]::Escape($projectName) }
+
+        if (-not $alreadyAdded) {
+
+            Invoke-DotNet -Arguments @(
+                "sln",
+                $solutionFile,
+                "add",
+                $projectFile
+            )
+        }
     }
 
     $templateFiles = @(
@@ -196,10 +247,13 @@ $appSettings = @'
 }
 '@
 
-Set-Content `
-    -Path (Join-Path $apiPath "appsettings.json") `
-    -Value $appSettings `
-    -Encoding UTF8
+    if (-not (Test-Path (Join-Path $apiPath "appsettings.json")))
+    {
+        Set-Content `
+            -Path (Join-Path $apiPath "appsettings.json") `
+            -Value $appSettings `
+            -Encoding UTF8
+    }
 
 $appSettingsDevelopment = @'
 {
@@ -212,10 +266,13 @@ $appSettingsDevelopment = @'
 }
 '@
 
-Set-Content `
-    -Path (Join-Path $apiPath "appsettings.Development.json") `
-    -Value $appSettingsDevelopment `
-    -Encoding UTF8
+    if (-not (Test-Path (Join-Path $apiPath "appsettings.Development.json")))
+    {
+        Set-Content `
+            -Path (Join-Path $apiPath "appsettings.Development.json") `
+            -Value $appSettingsDevelopment `
+            -Encoding UTF8
+    }
 
 $appSettingsProduction = @'
 {
@@ -228,10 +285,13 @@ $appSettingsProduction = @'
 }
 '@
 
-Set-Content `
-    -Path (Join-Path $apiPath "appsettings.Production.json") `
-    -Value $appSettingsProduction `
-    -Encoding UTF8
+    if (-not (Test-Path (Join-Path $apiPath "appsettings.Production.json")))
+    {
+        Set-Content `
+            -Path (Join-Path $apiPath "appsettings.Production.json") `
+            -Value $appSettingsProduction `
+           -Encoding UTF8
+    }
 
 $dockerfile = @'
 FROM mcr.microsoft.com/dotnet/aspnet:latest AS base
@@ -248,9 +308,7 @@ COPY . .
 
 RUN dotnet restore Authentication.API/Authentication.API.csproj
 
-RUN dotnet publish Authentication.API/Authentication.API.csproj ^
-    -c Release ^
-    -o /app/publish
+RUN dotnet publish Authentication.API/Authentication.API.csproj -c Release -o /app/publish
 
 FROM base AS final
 
@@ -261,10 +319,13 @@ COPY --from=build /app/publish .
 ENTRYPOINT ["dotnet", "Authentication.API.dll"]
 '@
 
-Set-Content `
-    -Path (Join-Path $apiPath "Dockerfile") `
-    -Value $dockerfile `
-    -Encoding UTF8
+    if (-not (Test-Path (Join-Path $apiPath "Dockerfile")))
+    {
+        Set-Content `
+            -Path (Join-Path $apiPath "Dockerfile") `
+            -Value $dockerfile `
+            -Encoding UTF8
+    }
 
 $dockerIgnore = @'
 bin
@@ -276,43 +337,42 @@ Dockerfile*
 docker-compose*
 '@
 
-Set-Content `
-    -Path (Join-Path $servicePath ".dockerignore") `
-    -Value $dockerIgnore `
-    -Encoding UTF8
+if (-not (Test-Path (Join-Path $servicePath ".dockerignore")))
+{
+    Set-Content `
+        -Path (Join-Path $servicePath ".dockerignore") `
+        -Value $dockerIgnore `
+        -Encoding UTF8
+}
 
-    Invoke-DotNet -Arguments @(
-        "add",
-        (Join-Path $servicePath "Authentication.Application\Authentication.Application.csproj"),
-        "reference",
-        (Join-Path $servicePath "Authentication.Domain\Authentication.Domain.csproj")
-    )
+    Ensure-ProjectReference `
+        -Project (Join-Path $servicePath "Authentication.Application\Authentication.Application.csproj") `
+        -Reference (Join-Path $servicePath "Authentication.Domain\Authentication.Domain.csproj")
 
-    Invoke-DotNet -Arguments @(
-        "add",
-        (Join-Path $servicePath "Authentication.Infrastructure\Authentication.Infrastructure.csproj"),
-        "reference",
-        (Join-Path $servicePath "Authentication.Application\Authentication.Application.csproj")
-    )
+    Ensure-ProjectReference `
+        -Project (Join-Path $servicePath "Authentication.Infrastructure\Authentication.Infrastructure.csproj") `
+        -Reference (Join-Path $servicePath "Authentication.Application\Authentication.Application.csproj")
 
-    Invoke-DotNet -Arguments @(
-        "add",
-        (Join-Path $servicePath "Authentication.Infrastructure\Authentication.Infrastructure.csproj"),
-        "reference",
-        (Join-Path $servicePath "Authentication.Domain\Authentication.Domain.csproj")
-    )
+    Ensure-ProjectReference `
+        -Project (Join-Path $servicePath "Authentication.Infrastructure\Authentication.Infrastructure.csproj") `
+        -Reference (Join-Path $servicePath "Authentication.Domain\Authentication.Domain.csproj")
 
-    Invoke-DotNet -Arguments @(
-        "add",
-        (Join-Path $servicePath "Authentication.API\Authentication.API.csproj"),
-        "reference",
-        (Join-Path $servicePath "Authentication.Application\Authentication.Application.csproj")
-    )
+    Ensure-ProjectReference `
+        -Project (Join-Path $servicePath "Authentication.API\Authentication.API.csproj") `
+        -Reference (Join-Path $servicePath "Authentication.Application\Authentication.Application.csproj")
+
+    Ensure-ProjectReference `
+        -Project (Join-Path $servicePath "Authentication.API\Authentication.API.csproj") `
+        -Reference (Join-Path $servicePath "Authentication.Infrastructure\Authentication.Infrastructure.csproj")
+
+    Ensure-ProjectReference `
+        -Project (Join-Path $servicePath "Authentication.Tests\Authentication.Tests.csproj") `
+        -Reference (Join-Path $servicePath "Authentication.Application\Authentication.Application.csproj")
 
     $composeFile = Join-Path $servicePath "docker-compose.yml"
 
-    if (-not (Test-Path $composeFile)) {
-
+if (-not (Test-Path $composeFile))
+{
 @"
 services:
   authentication.api:
@@ -331,8 +391,11 @@ services:
 networks:
   infra_net:
     external: true
-"@ | Set-Content -Path $composeFile -Encoding UTF8
-    }
+"@ |
+    Set-Content `
+        -Path $composeFile `
+        -Encoding UTF8
+}
 
     $frameworkFile = Join-Path $servicesPath "Authentication.TargetFramework.txt"
 
@@ -340,7 +403,7 @@ networks:
         -Path $frameworkFile `
         -Value $targetFramework `
         -Encoding UTF8
-
+ 
     Write-Host "Restaurando solução..." -ForegroundColor Yellow
 
     Invoke-DotNet -Arguments @(
