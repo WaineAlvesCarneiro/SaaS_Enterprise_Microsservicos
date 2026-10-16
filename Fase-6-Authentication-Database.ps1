@@ -44,6 +44,7 @@ if (-not (Test-Path -LiteralPath $infrastructureProject)) {
 $entityPaths = @(
     (Join-Path $rootPath "Authentication.Domain\Entities\User.cs"),
     (Join-Path $rootPath "Authentication.Domain\Entities\Role.cs"),
+    (Join-Path $rootPath "Authentication.Domain\Entities\Permission.cs"),
     (Join-Path $rootPath "Authentication.Domain\Entities\RefreshToken.cs")
 )
 foreach ($entityPath in $entityPaths) {
@@ -82,21 +83,59 @@ $efVersionMatch = [regex]::Match($efVersionText, '\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]
 if (-not $efVersionMatch.Success) {
     throw "Nao foi possivel identificar a versao do dotnet-ef: $efVersionText"
 }
-if ($efVersionMatch.Value -notmatch '^11\.0\.0-preview\.') {
-    throw "Versao do dotnet-ef incompatível: '$($efVersionMatch.Value)'. A Fase 4 requer .NET (detecção automática da versão estável mais recente)."
+$targetFrameworkFile =
+    Join-Path (Split-Path $rootPath -Parent) `
+        "Authentication.TargetFramework.txt"
+
+if (-not (Test-Path $targetFrameworkFile))
+{
+    throw "Arquivo Authentication.TargetFramework.txt nao encontrado."
 }
-if ($designPackage.Version -notmatch '^11\.0\.0-preview\.') {
-    throw "Microsoft.EntityFrameworkCore.Design esta na versao '$($designPackage.Version)', mas dotnet-ef e .NET (versão estável detectada automaticamente) preview. Alinhe os pacotes EF Core na Fase 4 antes de executar a Fase 6."
+
+$targetFramework =
+    (Get-Content $targetFrameworkFile -Raw).Trim()
+
+$tfMatch =
+    [regex]::Match(
+        $targetFramework,
+        '^net(\d+)\.0$'
+    )
+
+if (-not $tfMatch.Success)
+{
+    throw "TargetFramework invalido: $targetFramework"
 }
-if ($designPackage.Version -ne $efVersionMatch.Value) {
-    throw "Versoes incompatíveis: dotnet-ef $($efVersionMatch.Value), EF Core Design $($designPackage.Version). Alinhe-as na Fase 4 antes de executar a Fase 6."
+
+$frameworkMajor =
+    [int]$tfMatch.Groups[1].Value
+
+$packageMajor =
+    ([regex]::Match(
+            $designPackage.Version,
+            '^(\d+)'
+        )).Groups[1].Value
+    
+
+$toolMajor =
+    ([regex]::Match(
+            $efVersionMatch.Value,
+            '^(\d+)'
+        )).Groups[1].Value
+    
+
+if ($packageMajor -ne $frameworkMajor)
+{
+    throw "EF Core nao esta alinhado com $targetFramework."
+}
+
+if ($toolMajor -ne $frameworkMajor)
+{
+    throw "dotnet-ef nao esta alinhado com $targetFramework."
 }
 
 Write-Host "Iniciando Fase 6: persistencia da Authentication..." -ForegroundColor Cyan
 
-# =============================================================================
 # PASTAS
-# =============================================================================
 
 $folders = @(
     (Join-Path $rootPath "Authentication.Infrastructure\Persistence\Configurations"),
@@ -110,9 +149,7 @@ foreach ($folder in $folders) {
 
 $generatedFiles = @()
 
-# =============================================================================
 # USER CONFIGURATION
-# =============================================================================
 
 $userConfiguration = @'
 using Authentication.Domain.Entities;
@@ -130,6 +167,9 @@ public sealed class UserConfiguration
         builder.ToTable("Users");
 
         builder.HasKey(x => x.Id);
+
+        builder.Property(x => x.TenantId);
+        builder.HasIndex(x => x.TenantId);
 
         builder.Property(x => x.Name)
             .HasMaxLength(200)
@@ -166,9 +206,7 @@ $generatedFiles += @{
     Content = $userConfiguration
 }
 
-# =============================================================================
 # ROLE CONFIGURATION
-# =============================================================================
 
 $roleConfiguration = @'
 using Authentication.Domain.Entities;
@@ -199,6 +237,10 @@ public sealed class RoleConfiguration
             .HasForeignKey(x => x.RoleId)
             .IsRequired()
             .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasMany(x => x.Permissions)
+            .WithMany(x => x.Roles)
+            .UsingEntity(j => j.ToTable("RolePermissions"));
     }
 }
 '@
@@ -208,9 +250,7 @@ $generatedFiles += @{
     Content = $roleConfiguration
 }
 
-# =============================================================================
 # REFRESH TOKEN CONFIGURATION
-# =============================================================================
 
 $refreshTokenConfiguration = @'
 using Authentication.Domain.Entities;
@@ -250,9 +290,39 @@ $generatedFiles += @{
     Content = $refreshTokenConfiguration
 }
 
-# =============================================================================
+$permissionConfiguration = @'
+using Authentication.Domain.Entities;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+
+namespace Authentication.Infrastructure.Persistence.Configurations;
+
+public sealed class PermissionConfiguration
+    : IEntityTypeConfiguration<Permission>
+{
+    public void Configure(
+        EntityTypeBuilder<Permission> builder)
+    {
+        builder.ToTable("Permissions");
+
+        builder.HasKey(x => x.Id);
+
+        builder.Property(x => x.Name)
+            .HasMaxLength(100)
+            .IsRequired();
+
+        builder.HasIndex(x => x.Name)
+            .IsUnique();
+    }
+}
+'@
+
+$generatedFiles += @{
+    Path = Join-Path $rootPath "Authentication.Infrastructure\Persistence\Configurations\PermissionConfiguration.cs"
+    Content = $permissionConfiguration
+}
+
 # AUTHENTICATION DBCONTEXT
-# =============================================================================
 
 $dbContext = @'
 using Authentication.Domain.Entities;
@@ -273,6 +343,8 @@ public sealed class AuthenticationDbContext
 
     public DbSet<Role> Roles => Set<Role>();
 
+    public DbSet<Permission> Permissions => Set<Permission>();
+
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
 
     protected override void OnModelCreating(
@@ -291,9 +363,7 @@ $generatedFiles += @{
     Content = $dbContext
 }
 
-# =============================================================================
 # DATABASE EXTENSIONS
-# =============================================================================
 
 $databaseExtensions = @'
 using Microsoft.EntityFrameworkCore;
@@ -374,9 +444,7 @@ $generatedFiles += @{
     Content = $databaseExtensions
 }
 
-# =============================================================================
 # DESIGN TIME FACTORY
-# =============================================================================
 
 $factory = @'
 using Microsoft.EntityFrameworkCore;
@@ -417,9 +485,7 @@ $generatedFiles += @{
     Content = $factory
 }
 
-# =============================================================================
 # BUILD
-# =============================================================================
 
 foreach ($file in $generatedFiles) {
     if (-not (Test-Path -LiteralPath $file.Path)) {
@@ -462,6 +528,26 @@ else {
         "--output-dir", "Persistence/Migrations",
         "--context", "AuthenticationDbContext"
     )
+
+    $createdMigration =
+    Get-ChildItem `
+        -LiteralPath $migrationsDirectory `
+        -Filter "*_InitialCreate.cs" `
+        -File `
+        -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+
+    if (-not $createdMigration)
+    {
+        throw "Migration InitialCreate nao foi criada."
+    }
 }
+
+Write-Host "Validando build apos Migration..." -ForegroundColor Yellow
+
+Invoke-DotNet -Arguments @(
+    "build",
+    $solutionPath
+)
 
 Write-Host "Fase 6 concluida: persistencia criada e build validado." -ForegroundColor Green

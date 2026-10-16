@@ -1,0 +1,655 @@
+# Fase 6 - Persistence (Authentication)
+
+## Objetivo
+
+Criar a camada de persistência da Authentication seguindo rigorosamente as regras da plataforma.
+
+A Fase 6 deve criar exclusivamente:
+
+- AuthenticationDbContext
+- Configurations (Fluent API)
+- DatabaseExtensions
+- AuthenticationDbContextFactory
+- Migration InitialCreate
+
+Não criar:
+
+- Seed
+- JWT
+- Login
+- Controllers
+- RabbitMQ
+- Repositories que não sejam necessários para a migration
+- Lógica de negócio
+- Serviços de aplicação
+
+A fase deve finalizar com:
+
+dotnet build
+
+e
+
+dotnet ef migrations add InitialCreate
+
+executados com sucesso.
+
+---
+
+# Pré-requisitos obrigatórios
+
+Validar antes de executar:
+
+- dotnet disponível
+- Solution Authentication.slnx existente
+- Projeto Authentication.Infrastructure existente
+- Projeto Authentication.Domain existente
+- Projeto Authentication.Application existente
+- Fase 5 concluída
+
+Validar existência das entidades:
+
+- User
+- Role
+- Permission
+- RefreshToken
+
+Validar referências arquiteturais:
+
+Application
+→ Domain
+
+Infrastructure
+→ Application
+→ Domain
+
+API
+→ Application
+→ Infrastructure
+
+Tests
+→ Application
+
+Domain
+→ nenhuma referência
+
+Validar pacotes instalados pela Fase 4:
+
+Authentication.Infrastructure
+
+- Microsoft.EntityFrameworkCore.SqlServer
+- Microsoft.EntityFrameworkCore.Design
+
+Não utilizar versões hardcoded.
+
+A validação deve garantir apenas que:
+
+- os pacotes existem
+- possuem a mesma versão
+- a major version coincide com o TargetFramework detectado anteriormente
+
+É proibido utilizar versões específicas hardcoded de:
+
+- .NET
+- EF Core
+- dotnet-ef
+
+É proibido validar:
+
+- preview
+- rc
+- nightly
+
+por valor fixo.
+
+---
+
+# Pastas a criar
+
+Authentication.Infrastructure
+
+Persistence/
+├── Configurations/
+├── Extensions/
+├── DesignTime/
+└── Migrations/
+
+---
+
+# Regras de Chaves
+
+Todas as entidades da Authentication devem utilizar:
+
+Guid
+
+como chave primária.
+
+Não utilizar:
+
+- int
+- long
+- short
+- identity
+- sequence
+
+Exemplos:
+
+User.Id
+Role.Id
+Permission.Id
+RefreshToken.Id
+
+↓
+
+Guid
+
+As chaves primárias não devem ser geradas pelo banco.
+
+A aplicação é responsável pela geração dos Guid.
+
+---
+
+# Regras de Foreign Keys
+
+Toda foreign key deve possuir o mesmo tipo da chave primária referenciada.
+
+Exemplos:
+
+User.RoleId
+→ Guid
+
+RefreshToken.UserId
+→ Guid
+
+RolePermissions.RoleId
+→ Guid
+
+RolePermissions.PermissionId
+→ Guid
+
+É proibido misturar:
+
+- Guid
+- int
+- long
+
+em relacionamentos.
+
+---
+
+# Regras de Strings
+
+Todo campo string deve possuir tamanho máximo explícito no Fluent API.
+
+É proibido deixar campos string sem definição de tamanho.
+
+Exemplo:
+
+builder.Property(x => x.Name)
+    .HasMaxLength(200);
+
+Todo tamanho deve refletir o domínio.
+
+Não utilizar tamanhos arbitrariamente grandes sem justificativa.
+
+---
+
+# Regras de Datas
+
+Utilizar:
+
+DateTime
+
+para:
+
+- CreatedAt
+- UpdatedAt
+- LastLoginAt
+- ExpiresAt
+- RevokedAt
+
+Datas opcionais devem utilizar:
+
+DateTime?
+
+Exemplos:
+
+- UpdatedAt
+- LastLoginAt
+- RevokedAt
+
+---
+
+# Regras de Booleanos
+
+Utilizar:
+
+bool
+
+para estados binários.
+
+Exemplos:
+
+- Active
+- FirstAccess
+- Revoked
+
+Configurar valores padrão via Fluent API quando aplicável.
+
+---
+
+# Regras de TenantId
+
+TenantId deve utilizar:
+
+Guid?
+
+Exemplo:
+
+public Guid? TenantId { get; set; }
+
+O banco deve permitir null.
+
+O mapeamento deve criar índice:
+
+TenantId
+
+para suportar multi-tenancy.
+
+---
+
+# Regras de Índices
+
+Criar índices apenas quando possuírem justificativa funcional.
+
+Obrigatórios:
+
+Users.Email
+→ Unique
+
+Roles.Name
+→ Unique
+
+Permissions.Name
+→ Unique
+
+RefreshTokens.Token
+→ Unique
+
+Users.TenantId
+→ Index
+
+Não criar índices especulativos.
+
+---
+
+# Regras de DeleteBehavior
+
+Utilizar explicitamente DeleteBehavior em todos os relacionamentos.
+
+Não depender do comportamento padrão do Entity Framework.
+
+Preferência inicial:
+
+DeleteBehavior.Restrict
+
+salvo justificativa técnica documentada.
+
+---
+
+# Regras de Fluent API
+
+Todo mapeamento deve ser realizado em classes de configuração.
+
+Proibido utilizar:
+
+- [Key]
+- [Table]
+- [Column]
+- [ForeignKey]
+- [Required]
+- [MaxLength]
+
+nas entidades do Domain.
+
+Todo mapeamento pertence exclusivamente à Infrastructure.
+
+---
+
+# AuthenticationDbContext
+
+Criar:
+
+AuthenticationDbContext
+
+Responsabilidades:
+
+- DbSet<User>
+- DbSet<Role>
+- DbSet<Permission>
+- DbSet<RefreshToken>
+
+Aplicar automaticamente:
+
+builder.ApplyConfigurationsFromAssembly(...)
+
+DbContext deve existir apenas na Infrastructure.
+
+---
+
+# UserConfiguration
+
+Tabela:
+
+Users
+
+Configurações mínimas:
+
+- Id chave primária
+- Name obrigatório
+- Email obrigatório
+- PasswordHash obrigatório
+- Active obrigatório
+- FirstAccess obrigatório
+- TenantId opcional
+
+Criar:
+
+- índice único em Email
+- índice em TenantId
+
+Relacionamento:
+
+User
+→ Role
+
+Foreign Key:
+
+RoleId
+
+DeleteBehavior:
+
+Restrict
+
+---
+
+# RoleConfiguration
+
+Tabela:
+
+Roles
+
+Configurações mínimas:
+
+- Id chave primária
+- Name obrigatório
+- índice único em Name
+
+Relacionamentos:
+
+Role
+→ Users
+
+Role
+↔ Permissions
+
+Criar tabela de junção:
+
+RolePermissions
+
+---
+
+# PermissionConfiguration
+
+Tabela:
+
+Permissions
+
+Configurações mínimas:
+
+- Id chave primária
+- Name obrigatório
+- índice único em Name
+
+Relacionamentos:
+
+Permission
+↔ Roles
+
+Tabela de junção:
+
+RolePermissions
+
+---
+
+# RefreshTokenConfiguration
+
+Tabela:
+
+RefreshTokens
+
+Configurações mínimas:
+
+- Id chave primária
+- UserId obrigatório
+- Token obrigatório
+- ExpiresAt obrigatório
+- Revoked obrigatório
+
+Criar:
+
+- índice único em Token
+
+Relacionamento:
+
+RefreshToken
+→ User
+
+DeleteBehavior:
+
+Restrict
+
+---
+
+# DatabaseExtensions
+
+Criar:
+
+DatabaseExtensions
+
+Responsabilidade:
+
+Registrar AuthenticationDbContext no DI.
+
+Método:
+
+AddDatabase(
+    IServiceCollection services,
+    IConfiguration configuration)
+
+Ler configurações:
+
+Database:Server
+
+Database:Port
+
+Database:Database
+
+Senha SQL obrigatoriamente:
+
+Docker Secret
+
+sql_sa_password
+
+Local padrão:
+
+/run/secrets/sql_sa_password
+
+Não armazenar senha em:
+
+- appsettings
+- código-fonte
+- constantes
+
+Caso o Secret não exista:
+
+lançar exceção.
+
+Montar ConnectionString dinamicamente utilizando:
+
+Microsoft.Data.SqlClient.SqlConnectionStringBuilder
+
+Registrar:
+
+AuthenticationDbContext
+
+utilizando SQL Server.
+
+---
+
+# AuthenticationDbContextFactory
+
+Criar:
+
+AuthenticationDbContextFactory
+
+Implementar:
+
+IDesignTimeDbContextFactory<AuthenticationDbContext>
+
+Objetivo:
+
+Permitir criação de migrations.
+
+Não utilizar:
+
+- Docker Secrets
+- IConfiguration
+- Runtime Services
+
+A factory existe apenas para design-time.
+
+Não reutilizar credenciais de produção.
+
+Não utilizar segredos reais.
+
+---
+
+# Migration
+
+Após criação de todos os arquivos:
+
+Executar:
+
+dotnet build
+
+Se o build falhar:
+
+encerrar imediatamente.
+
+Se o build passar:
+
+gerar:
+
+InitialCreate
+
+Local:
+
+Persistence/Migrations
+
+Comando:
+
+dotnet ef migrations add InitialCreate
+
+Validar previamente existência de:
+
+*_InitialCreate.cs
+
+Caso exista:
+
+não recriar.
+
+Não sobrescrever migration existente.
+
+---
+
+# Regras obrigatórias de arquitetura
+
+Domain
+
+Não pode conter:
+
+- EF Core
+- DbContext
+- SQL Server
+- RabbitMQ
+- IConfiguration
+- ILogger
+- Infrastructure
+
+Application
+
+Não pode conter:
+
+- DbContext
+- SQL
+- EF Core
+- Infrastructure
+
+Infrastructure
+
+Pode conter:
+
+- DbContext
+- Fluent API
+- SQL Server
+- ConnectionString
+- Factory
+- Implementações concretas
+
+API
+
+Não deve conter:
+
+- DbContext
+- SQL
+- Entity Framework
+
+DatabaseExtensions deve ser consumida futuramente pela API para composição de dependências.
+
+---
+
+# Regra de Consistência
+
+Toda entidade criada na Fase 5 deve possuir:
+
+- DbSet correspondente
+- Configuration correspondente
+- Mapeamento completo
+- Participação na migration
+
+Nenhuma entidade pode existir no Domain sem persistência correspondente na Fase 6.
+
+As entidades obrigatórias são:
+
+- User
+- Role
+- Permission
+- RefreshToken
+
+---
+
+# Critérios de conclusão
+
+A Fase 6 somente pode ser considerada concluída quando:
+
+- todos os arquivos forem criados
+- todas as validações passarem
+- build da solution passar
+- InitialCreate for criada com sucesso
+- nenhuma versão estiver hardcoded
+- nenhum Preview, RC ou Nightly for utilizado
+- Permission estiver persistida
+- TenantId estiver mapeado
+- RolePermissions estiver configurada
+- nenhuma referência arquitetural estiver incorreta
+- nenhum arquivo existente for sobrescrito
