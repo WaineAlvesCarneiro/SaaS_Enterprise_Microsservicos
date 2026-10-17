@@ -100,7 +100,9 @@ foreach ($package in @("MediatR", "FluentValidation")) {
 $coreDirectories = @(
     (Join-Path $rootPath "Authentication.Domain\Entities"),
     (Join-Path $rootPath "Authentication.Application\Interfaces"),
-    (Join-Path $rootPath "Authentication.Application\Behaviors")
+    (Join-Path $rootPath "Authentication.Application\Behaviors"),
+    (Join-Path $rootPath "Authentication.Application\Models"),
+    (Join-Path $rootPath "Authentication.Application\Security")
 )
 
 foreach ($directory in $coreDirectories) {
@@ -114,6 +116,9 @@ $coreFiles = @()
 # USER ENTITY
 
 $userEntity = @'
+using System;
+using System.Collections.Generic;
+
 namespace Authentication.Domain.Entities;
 
 public class User
@@ -128,19 +133,45 @@ public class User
 
     public string PasswordHash { get; set; } = string.Empty;
 
-    public bool Active { get; set; } = true;
+    public bool Active { get; private set; } = true;
 
-    public bool FirstAccess { get; set; } = true;
+    public bool FirstAccess { get; private set; } = true;
 
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime CreatedAt { get; private set; } = DateTime.UtcNow;
 
-    public DateTime? UpdatedAt { get; set; }
+    public DateTime? UpdatedAt { get; private set; }
 
-    public DateTime? LastLoginAt { get; set; }
+    public DateTime? LastLoginAt { get; private set; }
 
     public Guid RoleId { get; set; }
 
     public Role? Role { get; set; }
+
+    public ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
+
+    public void Activate()
+    {
+        Active = true;
+        UpdatedAt = DateTime.UtcNow;
+    }
+
+    public void Deactivate()
+    {
+        Active = false;
+        UpdatedAt = DateTime.UtcNow;
+    }
+
+    public void MarkFirstAccessCompleted()
+    {
+        FirstAccess = false;
+        UpdatedAt = DateTime.UtcNow;
+    }
+
+    public void RegisterLogin()
+    {
+        LastLoginAt = DateTime.UtcNow;
+        UpdatedAt = DateTime.UtcNow;
+    }
 }
 '@
 
@@ -152,17 +183,36 @@ $coreFiles += @{
 # ROLE ENTITY
 
 $roleEntity = @'
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
 namespace Authentication.Domain.Entities;
 
 public class Role
 {
+    private readonly List<Permission> _permissions = [];
+
     public Guid Id { get; set; }
 
     public string Name { get; set; } = string.Empty;
 
     public ICollection<User> Users { get; set; } = new List<User>();
 
-    public ICollection<Permission> Permissions { get; set; } = new List<Permission>();
+    public IReadOnlyCollection<Permission> Permissions => _permissions;
+
+    public void AddPermission(Permission permission)
+    {
+        if (_permissions.Any(x => x.Id == permission.Id))
+            return;
+
+        _permissions.Add(permission);
+    }
+
+    public void RemovePermission(Permission permission)
+    {
+        _permissions.RemoveAll(x => x.Id == permission.Id);
+    }
 }
 '@
 
@@ -174,6 +224,9 @@ $coreFiles += @{
 # PERMISSION ENTITY
 
 $permissionEntity = @'
+using System;
+using System.Collections.Generic;
+
 namespace Authentication.Domain.Entities;
 
 public class Permission
@@ -191,9 +244,59 @@ $coreFiles += @{
     Content = $permissionEntity
 }
 
+# RoleNames
+
+$roleNamesFile = @'
+namespace Authentication.Application.Security;
+
+public static class RoleNames
+{
+    public const string Admin = "Admin";
+}
+'@
+
+$coreFiles += @{
+    Path = Join-Path $rootPath "Authentication.Application\Security\RoleNames.cs"
+    Content = $roleNamesFile
+}
+
+# Permissions
+
+$permissionsFile = @'
+namespace Authentication.Application.Security;
+
+public static class Permissions
+{
+    public const string UsersCreate = "Users.Create";
+
+    public const string UsersUpdate = "Users.Update";
+
+    public const string UsersDelete = "Users.Delete";
+
+    public const string RolesCreate = "Roles.Create";
+
+    public const string RolesUpdate = "Roles.Update";
+
+    public const string RolesDelete = "Roles.Delete";
+
+    public const string PermissionsCreate = "Permissions.Create";
+
+    public const string PermissionsUpdate = "Permissions.Update";
+
+    public const string PermissionsDelete = "Permissions.Delete";
+}
+'@
+
+$coreFiles += @{
+    Path = Join-Path $rootPath "Authentication.Application\Security\Permissions.cs"
+    Content = $permissionsFile
+}
+
 # REFRESH TOKEN ENTITY
 
 $refreshTokenEntity = @'
+using System;
+
 namespace Authentication.Domain.Entities;
 
 public class RefreshToken
@@ -206,13 +309,26 @@ public class RefreshToken
 
     public DateTime ExpiresAt { get; set; }
 
-    public bool Revoked { get; set; }
+    public bool Revoked { get; private set; }
 
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime CreatedAt { get; private set; } = DateTime.UtcNow;
 
-    public DateTime? RevokedAt { get; set; }
+    public DateTime? RevokedAt { get; private set; }
 
     public User? User { get; set; }
+
+    public bool IsExpired => DateTime.UtcNow >= ExpiresAt;
+
+    public bool IsActive => !Revoked && !IsExpired;
+
+    public void Revoke()
+    {
+        if (Revoked)
+            return;
+
+        Revoked = true;
+        RevokedAt = DateTime.UtcNow;
+    }
 }
 '@
 
@@ -224,19 +340,40 @@ $coreFiles += @{
 # TOKEN SERVICE INTERFACE
 
 $tokenInterface = @'
+using Authentication.Application.Models;
 using Authentication.Domain.Entities;
 
 namespace Authentication.Application.Interfaces;
 
 public interface ITokenService
 {
-    string GenerateToken(User user);
+    TokenResult GenerateToken(User user);
 }
 '@
 
 $coreFiles += @{
     Path = Join-Path $rootPath "Authentication.Application\Interfaces\ITokenService.cs"
     Content = $tokenInterface
+}
+
+# TOKEN RESULT RECORD
+
+$tokenResult = @'
+using System;
+
+namespace Authentication.Application.Models;
+
+public sealed record TokenResult(
+    string AccessToken,
+    string RefreshToken,
+    DateTime AccessTokenExpiresAt,
+    DateTime RefreshTokenExpiresAt
+);
+'@
+
+$coreFiles += @{
+    Path = Join-Path $rootPath "Authentication.Application\Models\TokenResult.cs"
+    Content = $tokenResult
 }
 
 # PASSWORD HASHER INTERFACE
@@ -314,6 +451,26 @@ public sealed class ValidationBehavior<TRequest, TResponse>
     }
 }
 '@
+
+# JwtClaimNames
+
+$jwtClaimNames = @'
+namespace Authentication.Application.Security;
+
+public static class JwtClaimNames
+{
+    public const string TenantId = "tenant_id";
+
+    public const string Permission = "permission";
+
+    public const string FirstAccess = "first_access";
+}
+'@
+
+$coreFiles += @{
+    Path = Join-Path $rootPath "Authentication.Application\Security\JwtClaimNames.cs"
+    Content = $jwtClaimNames
+}
 
 $coreFiles += @{
     Path = Join-Path $rootPath "Authentication.Application\Behaviors\ValidationBehavior.cs"

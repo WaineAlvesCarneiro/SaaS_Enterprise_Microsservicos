@@ -20,3 +20,12 @@ IMPORTANTE:
 - Gere apenas a fase que está sendo revisada no momento. Não antecipe implementações de fases futuras.
 
 Segue o PROJECT_CONTEXT.md.
+
+.\Fase-0-Cleanup.ps1
+.\Fase-1-Criar-Secrets.ps1
+.\Fase-2-Criar-Infrastructure.ps1
+.\Fase-3-Criar-Authentication.ps1
+.\Fase-4-Authentication-Packages.ps1
+.\Fase-5-Authentication-Core.ps1
+.\Fase-6-Authentication-Database.ps1
+.\
