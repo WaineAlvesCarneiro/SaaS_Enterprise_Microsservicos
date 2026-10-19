@@ -191,27 +191,28 @@ namespace Authentication.Domain.Entities;
 
 public class Role
 {
-    private readonly List<Permission> _permissions = [];
-
     public Guid Id { get; set; }
 
     public string Name { get; set; } = string.Empty;
 
     public ICollection<User> Users { get; set; } = new List<User>();
 
-    public IReadOnlyCollection<Permission> Permissions => _permissions;
+    public ICollection<Permission> Permissions { get; private set; } = new List<Permission>();
 
     public void AddPermission(Permission permission)
     {
-        if (_permissions.Any(x => x.Id == permission.Id))
-            return;
+        if (Permissions.Any(x => x.Id == permission.Id)) return;
 
-        _permissions.Add(permission);
+        Permissions.Add(permission);
     }
 
     public void RemovePermission(Permission permission)
     {
-        _permissions.RemoveAll(x => x.Id == permission.Id);
+        var existing = Permissions.FirstOrDefault(x => x.Id == permission.Id);
+
+        if (existing is null) return;
+
+        Permissions.Remove(existing);
     }
 }
 '@
@@ -323,8 +324,7 @@ public class RefreshToken
 
     public void Revoke()
     {
-        if (Revoked)
-            return;
+        if (Revoked) return;
 
         Revoked = true;
         RevokedAt = DateTime.UtcNow;
@@ -402,15 +402,11 @@ using MediatR;
 
 namespace Authentication.Application.Behaviors;
 
-public sealed class ValidationBehavior<TRequest, TResponse>
-    : IPipelineBehavior<TRequest, TResponse>
-    where TRequest : notnull
+public sealed class ValidationBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse> where TRequest : notnull
 {
-    private readonly IEnumerable<IValidator<TRequest>>
-        _validators;
+    private readonly IEnumerable<IValidator<TRequest>> _validators;
 
-    public ValidationBehavior(
-        IEnumerable<IValidator<TRequest>> validators)
+    public ValidationBehavior(IEnumerable<IValidator<TRequest>> validators)
     {
         _validators = validators;
     }
@@ -420,32 +416,20 @@ public sealed class ValidationBehavior<TRequest, TResponse>
         RequestHandlerDelegate<TResponse> next,
         CancellationToken cancellationToken)
     {
-        if (!_validators.Any())
-        {
-            return await next(cancellationToken);
-        }
+        if (!_validators.Any()) return await next(cancellationToken);
 
         var failures = new List<FluentValidation.Results.ValidationFailure>();
 
         foreach (var validator in _validators)
         {
-            var context =
-                new ValidationContext<TRequest>(request);
+            var context = new ValidationContext<TRequest>(request);
 
-            var result =
-                await validator.ValidateAsync(
-                    context,
-                    cancellationToken);
+            var result = await validator.ValidateAsync(context, cancellationToken);
 
-            failures.AddRange(
-                result.Errors.Where(x => x != null)
-            );
+            failures.AddRange(result.Errors.Where(x => x != null));
         }
 
-        if (failures.Count > 0)
-        {
-            throw new ValidationException(failures);
-        }
+        if (failures.Count > 0) throw new ValidationException(failures);
 
         return await next(cancellationToken);
     }

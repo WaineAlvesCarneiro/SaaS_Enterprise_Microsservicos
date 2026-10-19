@@ -158,11 +158,9 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace Authentication.Infrastructure.Persistence.Configurations;
 
-public sealed class UserConfiguration
-    : IEntityTypeConfiguration<User>
+public sealed class UserConfiguration : IEntityTypeConfiguration<User>
 {
-    public void Configure(
-        EntityTypeBuilder<User> builder)
+    public void Configure(EntityTypeBuilder<User> builder)
     {
         builder.ToTable("Users");
 
@@ -184,10 +182,26 @@ public sealed class UserConfiguration
             .IsRequired();
 
         builder.Property(x => x.Active)
+            .IsRequired()
+            .HasDefaultValue(true);
+
+        builder.Property(x => x.Active)
+            .UsePropertyAccessMode(PropertyAccessMode.Property);
+
+        builder.Property(x => x.FirstAccess)
+            .IsRequired()
             .HasDefaultValue(true);
 
         builder.Property(x => x.FirstAccess)
-            .HasDefaultValue(true);
+            .UsePropertyAccessMode(PropertyAccessMode.Property);
+
+        builder.Property(x => x.CreatedAt)
+            .ValueGeneratedNever()
+            .IsRequired();
+
+        builder.Property(x => x.UpdatedAt);
+
+        builder.Property(x => x.LastLoginAt);
 
         builder.HasIndex(x => x.Email)
             .IsUnique();
@@ -209,17 +223,16 @@ $generatedFiles += @{
 # ROLE CONFIGURATION
 
 $roleConfiguration = @'
+using System.Collections.Generic;
 using Authentication.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace Authentication.Infrastructure.Persistence.Configurations;
 
-public sealed class RoleConfiguration
-    : IEntityTypeConfiguration<Role>
+public sealed class RoleConfiguration : IEntityTypeConfiguration<Role>
 {
-    public void Configure(
-        EntityTypeBuilder<Role> builder)
+    public void Configure(EntityTypeBuilder<Role> builder)
     {
         builder.ToTable("Roles");
 
@@ -240,7 +253,27 @@ public sealed class RoleConfiguration
 
         builder.HasMany(x => x.Permissions)
             .WithMany(x => x.Roles)
-            .UsingEntity(j => j.ToTable("RolePermissions"));
+            .UsingEntity<Dictionary<string, object>>("RolePermissions",
+                permission =>
+                    permission.HasOne<Permission>()
+                        .WithMany()
+                        .HasForeignKey("PermissionId")
+                        .OnDelete(DeleteBehavior.Restrict),
+
+                role =>
+                    role.HasOne<Role>()
+                        .WithMany()
+                        .HasForeignKey("RoleId")
+                        .OnDelete(DeleteBehavior.Restrict),
+
+                join =>
+                {
+                    join.ToTable("RolePermissions");
+
+                    join.HasKey(
+                        "RoleId",
+                        "PermissionId");
+                });
     }
 }
 '@
@@ -259,11 +292,9 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace Authentication.Infrastructure.Persistence.Configurations;
 
-public sealed class RefreshTokenConfiguration
-    : IEntityTypeConfiguration<RefreshToken>
+public sealed class RefreshTokenConfiguration : IEntityTypeConfiguration<RefreshToken>
 {
-    public void Configure(
-        EntityTypeBuilder<RefreshToken> builder)
+    public void Configure(EntityTypeBuilder<RefreshToken> builder)
     {
         builder.ToTable("RefreshTokens");
 
@@ -277,10 +308,14 @@ public sealed class RefreshTokenConfiguration
             .IsUnique();
 
         builder.HasOne(x => x.User)
-            .WithMany()
+            .WithMany(x => x.RefreshTokens)
             .HasForeignKey(x => x.UserId)
             .IsRequired()
             .OnDelete(DeleteBehavior.Restrict);
+
+        builder.Ignore(x => x.IsExpired);
+
+        builder.Ignore(x => x.IsActive);
     }
 }
 '@
@@ -297,11 +332,9 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace Authentication.Infrastructure.Persistence.Configurations;
 
-public sealed class PermissionConfiguration
-    : IEntityTypeConfiguration<Permission>
+public sealed class PermissionConfiguration : IEntityTypeConfiguration<Permission>
 {
-    public void Configure(
-        EntityTypeBuilder<Permission> builder)
+    public void Configure(EntityTypeBuilder<Permission> builder)
     {
         builder.ToTable("Permissions");
 
@@ -330,12 +363,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Authentication.Infrastructure.Persistence;
 
-public sealed class AuthenticationDbContext
-    : DbContext
+public sealed class AuthenticationDbContext : DbContext
 {
-    public AuthenticationDbContext(
-        DbContextOptions<AuthenticationDbContext> options)
-        : base(options)
+    public AuthenticationDbContext(DbContextOptions<AuthenticationDbContext> options) : base(options)
     {
     }
 
@@ -347,13 +377,11 @@ public sealed class AuthenticationDbContext
 
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
 
-    protected override void OnModelCreating(
-        ModelBuilder builder)
+    protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
 
-        builder.ApplyConfigurationsFromAssembly(
-            typeof(AuthenticationDbContext).Assembly);
+        builder.ApplyConfigurationsFromAssembly(typeof(AuthenticationDbContext).Assembly);
     }
 }
 '@
@@ -378,43 +406,31 @@ public static class DatabaseExtensions
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        var server =
-            configuration["Database:Server"];
+        var server = configuration["Database:Server"];
 
-        var port =
-            configuration["Database:Port"];
+        var port = configuration["Database:Port"];
 
-        var database =
-            configuration["Database:Database"];
+        var database = configuration["Database:Database"];
 
         if (string.IsNullOrWhiteSpace(server)
             || string.IsNullOrWhiteSpace(port)
             || string.IsNullOrWhiteSpace(database))
         {
-            throw new InvalidOperationException(
-                "As configurações 'Database:Server', 'Database:Port' e 'Database:Database' são obrigatórias.");
+            throw new InvalidOperationException("As configurações 'Database:Server', 'Database:Port' e 'Database:Database' são obrigatórias.");
         }
 
-        const string sqlPasswordSecretPath =
-            "/run/secrets/sql_sa_password";
+        const string sqlPasswordSecretPath = "/run/secrets/sql_sa_password";
 
         if (!File.Exists(sqlPasswordSecretPath))
-        {
             throw new InvalidOperationException(
                 $"Docker Secret não encontrado em '{sqlPasswordSecretPath}'. Confirme que o serviço Authentication recebe o secret 'sql_sa_password'.");
-        }
 
-        var password =
-            File.ReadAllText(sqlPasswordSecretPath).Trim();
+        var password = File.ReadAllText(sqlPasswordSecretPath).Trim();
 
         if (string.IsNullOrWhiteSpace(password))
-        {
-            throw new InvalidOperationException(
-                "O Docker Secret 'sql_sa_password' está vazio.");
-        }
+            throw new InvalidOperationException("O Docker Secret 'sql_sa_password' está vazio.");
 
-        var connectionStringBuilder =
-            new Microsoft.Data.SqlClient.SqlConnectionStringBuilder
+        var connectionStringBuilder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder
             {
                 DataSource = $"{server},{port}",
                 InitialCatalog = database,
@@ -427,11 +443,11 @@ public static class DatabaseExtensions
 
         var connectionString = connectionStringBuilder.ConnectionString;
 
-        services.AddDbContext<AuthenticationDbContext>(
-            options =>
+        services.AddDbContext<AuthenticationDbContext>(options =>
             {
-                options.UseSqlServer(
-                    connectionString);
+                options.UseSqlServer(connectionString);
+                options.EnableDetailedErrors();
+                options.EnableSensitiveDataLogging(false);
             });
 
         return services;
@@ -452,14 +468,11 @@ using Microsoft.EntityFrameworkCore.Design;
 
 namespace Authentication.Infrastructure.Persistence.DesignTime;
 
-public sealed class AuthenticationDbContextFactory
-    : IDesignTimeDbContextFactory<AuthenticationDbContext>
+public sealed class AuthenticationDbContextFactory : IDesignTimeDbContextFactory<AuthenticationDbContext>
 {
-    public AuthenticationDbContext CreateDbContext(
-        string[] args)
+    public AuthenticationDbContext CreateDbContext(string[] args)
     {
-        var connectionStringBuilder =
-            new Microsoft.Data.SqlClient.SqlConnectionStringBuilder
+        var connectionStringBuilder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder
             {
                 DataSource = "localhost,1433",
                 InitialCatalog = "Db_Authentication",
@@ -469,13 +482,11 @@ public sealed class AuthenticationDbContextFactory
                 TrustServerCertificate = true
             };
 
-        var builder =
-            new DbContextOptionsBuilder<AuthenticationDbContext>();
+        var builder = new DbContextOptionsBuilder<AuthenticationDbContext>();
 
         builder.UseSqlServer(connectionStringBuilder.ConnectionString);
 
-        return new AuthenticationDbContext(
-            builder.Options);
+        return new AuthenticationDbContext(builder.Options);
     }
 }
 '@
@@ -513,6 +524,16 @@ Write-Host "Validando build da solution Authentication..." -ForegroundColor Yell
 Invoke-DotNet -Arguments @("build", $solutionPath)
 
 $migrationsDirectory = Join-Path $rootPath "Authentication.Infrastructure\Persistence\Migrations"
+
+if (-not (Test-Path $migrationsDirectory))
+{
+    New-Item `
+        -ItemType Directory `
+        -Force `
+        -Path $migrationsDirectory |
+    Out-Null
+}
+
 $initialMigration = Get-ChildItem -LiteralPath $migrationsDirectory -Filter "*_InitialCreate.cs" -File -ErrorAction SilentlyContinue |
     Select-Object -First 1
 
@@ -529,13 +550,12 @@ else {
         "--context", "AuthenticationDbContext"
     )
 
-    $createdMigration =
-    Get-ChildItem `
-        -LiteralPath $migrationsDirectory `
-        -Filter "*_InitialCreate.cs" `
-        -File `
-        -ErrorAction SilentlyContinue |
-    Select-Object -First 1
+    $createdMigration = Get-ChildItem `
+            -LiteralPath $migrationsDirectory `
+            -Filter "*_InitialCreate.cs" `
+            -File `
+            -ErrorAction SilentlyContinue |
+        Select-Object -First 1
 
     if (-not $createdMigration)
     {
