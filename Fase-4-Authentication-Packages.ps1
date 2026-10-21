@@ -13,7 +13,6 @@ if ($LASTEXITCODE -ne 0)
 $servicePath = Join-Path $PSScriptRoot "Servicos\Authentication"
 $solutionPath = Join-Path $servicePath "Authentication.slnx"
 
-# Ler TargetFramework gerado pela Fase-3
 $tfFile = Join-Path (Join-Path $PSScriptRoot 'Servicos') 'Authentication.TargetFramework.txt'
 if (Test-Path $tfFile) {
     $TargetFramework = (Get-Content $tfFile -Raw).Trim()
@@ -28,6 +27,12 @@ $projectPaths = @{
     Domain         = Join-Path $servicePath "Authentication.Domain\Authentication.Domain.csproj"
     Infrastructure = Join-Path $servicePath "Authentication.Infrastructure\Authentication.Infrastructure.csproj"
     Tests          = Join-Path $servicePath "Authentication.Tests\Authentication.Tests.csproj"
+}
+
+foreach ($project in $projectPaths.Values) {
+    if (-not (Test-Path -LiteralPath $project)) {
+        throw "Projeto obrigatorio nao encontrado: $project. Execute e valide a Fase 3 antes da Fase 4."
+    }
 }
 
 function Invoke-DotNet {
@@ -52,9 +57,7 @@ function Ensure-Package {
     )
 
     [xml]$projectXml = Get-Content -LiteralPath $Project -Raw
-    $packageReference = $projectXml.SelectNodes("//PackageReference") |
-        Where-Object { $_.Include -eq $Package } |
-        Select-Object -First 1
+    $packageReference = $projectXml.SelectNodes("//PackageReference") | Where-Object { $_.Include -eq $Package } | Select-Object -First 1
 
     if ($packageReference -and (-not $Version -or $packageReference.Version -eq $Version)) {
         Write-Host "Pacote ja referenciado na versao esperada: $Package" -ForegroundColor Gray
@@ -83,15 +86,9 @@ function Remove-Package {
         [string]$Package
     )
 
-    [xml]$projectXml =
-        Get-Content -LiteralPath $Project -Raw
+    [xml]$projectXml = Get-Content -LiteralPath $Project -Raw
 
-    $packageReference =
-        $projectXml.SelectNodes("//PackageReference") |
-        Where-Object {
-            $_.Include -eq $Package
-        } |
-        Select-Object -First 1
+    $packageReference = $projectXml.SelectNodes("//PackageReference") | Where-Object { $_.Include -eq $Package } | Select-Object -First 1
 
     if ($packageReference)
     {
@@ -132,9 +129,10 @@ function Ensure-DotNetEf {
     if (-not $tfMatch.Success) {
         throw "Nao foi possivel extrair major do TargetFramework: $TargetFramework"
     }
+
     $efMajor = [int]$tfMatch.Groups[1].Value
     $efPackageVersion = "$efMajor.0.*"
-
+    
     if ($exitCode -ne 0) {
         Write-Host "dotnet-ef nao encontrado. Instalando ferramenta global dotnet-ef na versao $efPackageVersion..." -ForegroundColor Yellow
         Invoke-DotNet -Arguments @(
@@ -158,8 +156,7 @@ function Ensure-DotNetEf {
     }
 
     $installedEfVersion = $versionMatch.Groups[1].Value
-    $installedMajor =
-    [int](([regex]::Match($installedEfVersion,'^(\d+)')).Groups[1].Value)
+    $installedMajor = [int](([regex]::Match($installedEfVersion,'^(\d+)')).Groups[1].Value)
 
     if ($installedMajor -ne $efMajor)
     {
@@ -185,8 +182,7 @@ function Ensure-DotNetEf {
 
         $installedEfVersion = $versionMatch.Groups[1].Value
 
-        $installedMajor =
-            [int](([regex]::Match($installedEfVersion,'^(\d+)')).Groups[1].Value)
+        $installedMajor = [int](([regex]::Match($installedEfVersion,'^(\d+)')).Groups[1].Value)
 
         if ($installedMajor -ne $efMajor)
         {
@@ -198,7 +194,7 @@ function Ensure-DotNetEf {
     Write-Host "dotnet-ef validado: $installedEfVersion" -ForegroundColor Green
     return [PSCustomObject]@{
         ToolVersion    = $installedEfVersion
-        PackageVersion = $efPackageVersion
+        PackageVersion = $installedEfVersion
     }
 }
 
@@ -224,14 +220,7 @@ if ([System.IO.Path]::GetExtension($solutionPath) -ne ".slnx")
 {
     throw "Solution invalida. Esperado .slnx."
 }
-Write-Host "Solution detectada: $solutionPath" `
-    -ForegroundColor Green
-
-foreach ($project in $projectPaths.Values) {
-    if (-not (Test-Path $project)) {
-        throw "Projeto obrigatorio nao encontrado: $project. Execute e valide a Fase 3 antes da Fase 4."
-    }
-}
+Write-Host "Solution detectada: $solutionPath" -ForegroundColor Green
 
 [xml]$testProjectXml = Get-Content $projectPaths.Tests -Raw
 
@@ -251,9 +240,8 @@ if ($usingNode) {
 
 Write-Host "Iniciando Fase 4: pacotes da Authentication..." -ForegroundColor Cyan
 
-Remove-Package `
-    -Project $projectPaths.Tests `
-    -Package "xunit"
+Remove-Package -Project $projectPaths.Tests -Package "xunit"
+
 $efInfo = Ensure-DotNetEf
 $efVersion = $efInfo.ToolVersion
 $efPackageVersion = $efInfo.PackageVersion
@@ -267,6 +255,8 @@ $packages = @(
     @{ Project = $projectPaths.Infrastructure; Package = "BCrypt.Net-Next" },
     @{ Project = $projectPaths.Infrastructure; Package = "RabbitMQ.Client" },
     @{ Project = $projectPaths.Infrastructure; Package = "System.IdentityModel.Tokens.Jwt" },
+    @{ Project = $projectPaths.Infrastructure; Package = "Microsoft.AspNetCore.Authentication.JwtBearer" },
+    @{ Project = $projectPaths.Infrastructure; Package = "Microsoft.Extensions.Hosting" },
 
     @{ Project = $projectPaths.API; Package = "Microsoft.AspNetCore.Authentication.JwtBearer" },
     @{ Project = $projectPaths.API; Package = "Microsoft.AspNetCore.OpenApi" },

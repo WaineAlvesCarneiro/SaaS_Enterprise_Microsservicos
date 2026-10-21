@@ -73,10 +73,12 @@ if (-not (Test-ProjectReference -FromProject $projectPaths.Application -ToProjec
 if (Test-ProjectReference -FromProject $projectPaths.Application -ToProject $projectPaths.Infrastructure) {
     throw "Violacao arquitetural: Authentication.Application nao pode referenciar Authentication.Infrastructure."
 }
+
 [xml]$domainXml = Get-Content -LiteralPath $projectPaths.Domain -Raw
 if ($domainXml.SelectNodes("//ProjectReference").Count -gt 0) {
     throw "Violacao arquitetural: Authentication.Domain nao pode referenciar outros projetos."
 }
+
 if (-not (Test-ProjectReference -FromProject $projectPaths.Infrastructure -ToProject $projectPaths.Application) -or
     -not (Test-ProjectReference -FromProject $projectPaths.Infrastructure -ToProject $projectPaths.Domain)) {
     throw "Authentication.Infrastructure deve referenciar Authentication.Application e Authentication.Domain."
@@ -112,8 +114,6 @@ foreach ($directory in $coreDirectories) {
 Write-Host "Iniciando Fase 5: Core da Authentication..." -ForegroundColor Cyan
 
 $coreFiles = @()
-
-# USER ENTITY
 
 $userEntity = @'
 using System;
@@ -180,8 +180,6 @@ $coreFiles += @{
     Content = $userEntity
 }
 
-# ROLE ENTITY
-
 $roleEntity = @'
 using System;
 using System.Collections.Generic;
@@ -222,8 +220,6 @@ $coreFiles += @{
     Content = $roleEntity
 }
 
-# PERMISSION ENTITY
-
 $permissionEntity = @'
 using System;
 using System.Collections.Generic;
@@ -245,8 +241,6 @@ $coreFiles += @{
     Content = $permissionEntity
 }
 
-# RoleNames
-
 $roleNamesFile = @'
 namespace Authentication.Application.Security;
 
@@ -260,8 +254,6 @@ $coreFiles += @{
     Path = Join-Path $rootPath "Authentication.Application\Security\RoleNames.cs"
     Content = $roleNamesFile
 }
-
-# Permissions
 
 $permissionsFile = @'
 namespace Authentication.Application.Security;
@@ -292,8 +284,6 @@ $coreFiles += @{
     Path = Join-Path $rootPath "Authentication.Application\Security\Permissions.cs"
     Content = $permissionsFile
 }
-
-# REFRESH TOKEN ENTITY
 
 $refreshTokenEntity = @'
 using System;
@@ -337,8 +327,6 @@ $coreFiles += @{
     Content = $refreshTokenEntity
 }
 
-# TOKEN SERVICE INTERFACE
-
 $tokenInterface = @'
 using Authentication.Application.Models;
 using Authentication.Domain.Entities;
@@ -355,8 +343,6 @@ $coreFiles += @{
     Path = Join-Path $rootPath "Authentication.Application\Interfaces\ITokenService.cs"
     Content = $tokenInterface
 }
-
-# TOKEN RESULT RECORD
 
 $tokenResult = @'
 using System;
@@ -376,8 +362,6 @@ $coreFiles += @{
     Content = $tokenResult
 }
 
-# PASSWORD HASHER INTERFACE
-
 $passwordHasherInterface = @'
 namespace Authentication.Application.Interfaces;
 
@@ -393,8 +377,6 @@ $coreFiles += @{
     Path = Join-Path $rootPath "Authentication.Application\Interfaces\IPasswordHasher.cs"
     Content = $passwordHasherInterface
 }
-
-# VALIDATION BEHAVIOR
 
 $validationBehavior = @'
 using FluentValidation;
@@ -435,8 +417,6 @@ public sealed class ValidationBehavior<TRequest, TResponse> : IPipelineBehavior<
     }
 }
 '@
-
-# JwtClaimNames
 
 $jwtClaimNames = @'
 namespace Authentication.Application.Security;
@@ -482,8 +462,6 @@ foreach ($file in $coreFiles) {
     Set-Content -LiteralPath $file.Path -Value $file.Content -Encoding utf8
     Write-Host "Arquivo criado: $($file.Path)" -ForegroundColor Green
 }
-
-# BUILD
 
 Write-Host ""
 Write-Host "Validando build da solution Authentication..." -ForegroundColor Yellow

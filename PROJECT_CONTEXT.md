@@ -629,20 +629,18 @@ Objetivo:
 dotnet ef migrations add InitialCreate
 ```
 
-### Fase-7
+### Fase 7
 
 Responsabilidade:
 
 ```text
-Seed
+Security Bootstrap
 ```
 
 Criar:
 
 ```text
-Role Admin
 
-Admin User
 ```
 
 ### Fase-8

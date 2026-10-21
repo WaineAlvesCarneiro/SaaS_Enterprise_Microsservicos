@@ -173,12 +173,9 @@ try {
 
     foreach ($projectFile in $projectFiles) {
 
-        $projectName =
-            [System.IO.Path]::GetFileNameWithoutExtension($projectFile)
+        $projectName = [System.IO.Path]::GetFileNameWithoutExtension($projectFile)
 
-        $alreadyAdded =
-            (& dotnet sln $solutionFile list) |
-            Where-Object { $_ -match [regex]::Escape($projectName) }
+        $alreadyAdded = (& dotnet sln $solutionFile list) | Where-Object { $_ -match [regex]::Escape($projectName) }
 
         if (-not $alreadyAdded) {
 
@@ -199,60 +196,46 @@ try {
         "Worker.cs"
     )
 
-    Get-ChildItem `
-        -Path $servicePath `
-        -Recurse `
-        -File |
-    Where-Object {
-        $_.Name -in $templateFiles
-    } |
-    ForEach-Object {
-
-        Write-Host `
-            "Removendo arquivo padrao: $($_.FullName)" `
-            -ForegroundColor Yellow
-
-        Remove-Item `
-            -LiteralPath $_.FullName `
-            -Force
+    Get-ChildItem -Path $servicePath -Recurse -File | Where-Object { $_.Name -in $templateFiles } | ForEach-Object {
+        Write-Host "Removendo arquivo padrao: $($_.FullName)" -ForegroundColor Yellow
+        Remove-Item -LiteralPath $_.FullName -Force
     }
 
-$apiPath = Join-Path $servicePath "Authentication.API"
+    $apiPath = Join-Path $servicePath "Authentication.API"
 
 $appSettings = @'
 {
+  "AllowedHosts": "*",
+
   "Database": {
     "Server": "",
-    "Port": "",
-    "Database": ""
+    "Port": 1433,
+    "Database": "Db_Authentication"
   },
 
   "RabbitMQ": {
     "Host": "",
-    "Port": "",
+    "Port": 5672,
     "Username": ""
   },
 
   "Jwt": {
-    "Issuer": "",
-    "Audience": ""
+    "Issuer": "Authentication",
+    "Audience": "SaaSEnterprise",
+    "ExpireMinutes": 60,
+    "RefreshTokenDays": 30
   },
 
-  "Logging": {
-    "LogLevel": {
-      "Default": "Information",
-      "Microsoft.AspNetCore": "Warning"
-    }
+  "HealthChecks": {
+    "Enabled": true,
+    "Path": "/health"
   }
 }
 '@
 
     if (-not (Test-Path (Join-Path $apiPath "appsettings.json")))
     {
-        Set-Content `
-            -Path (Join-Path $apiPath "appsettings.json") `
-            -Value $appSettings `
-            -Encoding UTF8
+        Set-Content -Path (Join-Path $apiPath "appsettings.json") -Value $appSettings -Encoding UTF8
     }
 
 $appSettingsDevelopment = @'
@@ -268,10 +251,7 @@ $appSettingsDevelopment = @'
 
     if (-not (Test-Path (Join-Path $apiPath "appsettings.Development.json")))
     {
-        Set-Content `
-            -Path (Join-Path $apiPath "appsettings.Development.json") `
-            -Value $appSettingsDevelopment `
-            -Encoding UTF8
+        Set-Content -Path (Join-Path $apiPath "appsettings.Development.json") -Value $appSettingsDevelopment -Encoding UTF8
     }
 
 $appSettingsProduction = @'
@@ -287,10 +267,7 @@ $appSettingsProduction = @'
 
     if (-not (Test-Path (Join-Path $apiPath "appsettings.Production.json")))
     {
-        Set-Content `
-            -Path (Join-Path $apiPath "appsettings.Production.json") `
-            -Value $appSettingsProduction `
-           -Encoding UTF8
+        Set-Content -Path (Join-Path $apiPath "appsettings.Production.json") -Value $appSettingsProduction -Encoding UTF8
     }
 
 $dockerfile = @'
@@ -321,10 +298,7 @@ ENTRYPOINT ["dotnet", "Authentication.API.dll"]
 
     if (-not (Test-Path (Join-Path $apiPath "Dockerfile")))
     {
-        Set-Content `
-            -Path (Join-Path $apiPath "Dockerfile") `
-            -Value $dockerfile `
-            -Encoding UTF8
+        Set-Content -Path (Join-Path $apiPath "Dockerfile") -Value $dockerfile -Encoding UTF8
     }
 
 $dockerIgnore = @'
@@ -337,13 +311,10 @@ Dockerfile*
 docker-compose*
 '@
 
-if (-not (Test-Path (Join-Path $servicePath ".dockerignore")))
-{
-    Set-Content `
-        -Path (Join-Path $servicePath ".dockerignore") `
-        -Value $dockerIgnore `
-        -Encoding UTF8
-}
+    if (-not (Test-Path (Join-Path $servicePath ".dockerignore")))
+    {
+        Set-Content -Path (Join-Path $servicePath ".dockerignore") -Value $dockerIgnore -Encoding UTF8
+    }
 
     Ensure-ProjectReference `
         -Project (Join-Path $servicePath "Authentication.Application\Authentication.Application.csproj") `
@@ -371,8 +342,8 @@ if (-not (Test-Path (Join-Path $servicePath ".dockerignore")))
 
     $composeFile = Join-Path $servicePath "docker-compose.yml"
 
-if (-not (Test-Path $composeFile))
-{
+    if (-not (Test-Path $composeFile))
+    {
 @"
 services:
   authentication.api:
@@ -392,17 +363,12 @@ networks:
   infra_net:
     external: true
 "@ |
-    Set-Content `
-        -Path $composeFile `
-        -Encoding UTF8
-}
+    Set-Content -Path $composeFile -Encoding UTF8
+    }
 
     $frameworkFile = Join-Path $servicesPath "Authentication.TargetFramework.txt"
 
-    Set-Content `
-        -Path $frameworkFile `
-        -Value $targetFramework `
-        -Encoding UTF8
+    Set-Content -Path $frameworkFile -Value $targetFramework -Encoding UTF8
  
     Write-Host "Restaurando solução..." -ForegroundColor Yellow
 

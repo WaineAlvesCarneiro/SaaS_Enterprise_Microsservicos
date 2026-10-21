@@ -6,8 +6,6 @@ Set-StrictMode -Version Latest
 
 Write-Host "🚀 Iniciando o provisionamento da Infraestrutura Base..." -ForegroundColor Cyan
 
-# VALIDAR DOCKER
-
 if (-not (Get-Command docker -ErrorAction SilentlyContinue))
 {
     throw "Docker nao encontrado."
@@ -20,16 +18,12 @@ if ($LASTEXITCODE -ne 0)
     throw "Docker nao esta disponivel."
 }
 
-# VALIDAR DOCKER SWARM
-
 $swarmStatus = docker info --format '{{.Swarm.LocalNodeState}}'
 
 if ($swarmStatus -ne "active")
 {
     throw "Docker Swarm nao esta ativo. Execute a Fase-1 primeiro."
 }
-
-# CARREGAR .ENV.BASE
 
 $envFile = Join-Path $PSScriptRoot ".env.base"
 
@@ -53,8 +47,6 @@ Get-Content $envFile | ForEach-Object {
     }
 }
 
-# VALIDAR SECRETS
-
 $requiredSecrets = @(
     "sql_sa_password",
     "rabbitmq_password",
@@ -63,9 +55,7 @@ $requiredSecrets = @(
 
 foreach ($secret in $requiredSecrets)
 {
-    $exists =
-        docker secret ls --format '{{.Name}}' |
-        Where-Object { $_ -eq $secret }
+    $exists = docker secret ls --format '{{.Name}}' | Where-Object { $_ -eq $secret }
 
     if (-not $exists)
     {
@@ -73,19 +63,14 @@ foreach ($secret in $requiredSecrets)
     }
 }
 
-# CRIAR REDE OVERLAY
-
 $networkExists =
-    docker network ls --format '{{.Name}}' |
-    Where-Object { $_ -eq $env:DOCKER_NETWORK }
+    docker network ls --format '{{.Name}}' | Where-Object { $_ -eq $env:DOCKER_NETWORK }
 
 if (-not $networkExists)
 {
     Write-Host "🌐 Criando rede Docker '$($env:DOCKER_NETWORK)'..." -ForegroundColor Yellow
 
-    docker network create `
-        --driver overlay `
-        $env:DOCKER_NETWORK | Out-Null
+    docker network create --driver overlay $env:DOCKER_NETWORK | Out-Null
 
     if ($LASTEXITCODE -ne 0)
     {
@@ -99,11 +84,8 @@ else
     Write-Host "✅ Rede Docker ja existe." -ForegroundColor Gray
 }
 
-# SQL SERVER
-
 $sqlExists =
-    docker service ls --format '{{.Name}}' |
-    Where-Object { $_ -eq $env:SQL_CONTAINER }
+    docker service ls --format '{{.Name}}' | Where-Object { $_ -eq $env:SQL_CONTAINER }
 
 if (-not $sqlExists)
 {
@@ -131,11 +113,7 @@ else
     Write-Host "✅ SQL Server ja existe." -ForegroundColor Gray
 }
 
-# RABBITMQ
-
-$rabbitExists =
-    docker service ls --format '{{.Name}}' |
-    Where-Object { $_ -eq $env:RABBIT_CONTAINER }
+$rabbitExists = docker service ls --format '{{.Name}}' | Where-Object { $_ -eq $env:RABBIT_CONTAINER }
 
 if (-not $rabbitExists)
 {
@@ -160,8 +138,6 @@ else
 {
     Write-Host "✅ RabbitMQ ja existe." -ForegroundColor Gray
 }
-
-# VALIDAR PORTA RABBITMQ
 
 Write-Host "⏳ Aguardando RabbitMQ responder..." -ForegroundColor Yellow
 
@@ -192,8 +168,6 @@ if (-not $portReady)
 {
     throw "RabbitMQ nao respondeu na porta 5672."
 }
-
-# FINALIZACAO
 
 Write-Host ""
 Write-Host "🎉 Infraestrutura compartilhada pronta." -ForegroundColor Green

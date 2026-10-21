@@ -57,8 +57,10 @@ foreach ($entityPath in $entityPaths) {
 $efPackages = @($infrastructureXml.SelectNodes("//PackageReference") | Where-Object {
     $_.Include -in @("Microsoft.EntityFrameworkCore.Design", "Microsoft.EntityFrameworkCore.SqlServer")
 })
+
 $designPackage = $efPackages | Where-Object { $_.Include -eq "Microsoft.EntityFrameworkCore.Design" } | Select-Object -First 1
 $sqlServerPackage = $efPackages | Where-Object { $_.Include -eq "Microsoft.EntityFrameworkCore.SqlServer" } | Select-Object -First 1
+
 if (-not $designPackage -or -not $sqlServerPackage) {
     throw "Os pacotes Microsoft.EntityFrameworkCore.Design e Microsoft.EntityFrameworkCore.SqlServer sao obrigatorios. Execute e valide a Fase 4."
 }
@@ -75,53 +77,37 @@ try {
 finally {
     $ErrorActionPreference = $currentPreference
 }
+
 if ($efExitCode -ne 0) {
     throw "A ferramenta 'dotnet-ef' nao esta disponivel. Instale e valide a versao .NET (detecção automática da versão estável mais recente) na Fase 4."
 }
+
 $efVersionText = $efVersionOutput -join " "
 $efVersionMatch = [regex]::Match($efVersionText, '\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?')
 if (-not $efVersionMatch.Success) {
     throw "Nao foi possivel identificar a versao do dotnet-ef: $efVersionText"
 }
-$targetFrameworkFile =
-    Join-Path (Split-Path $rootPath -Parent) `
-        "Authentication.TargetFramework.txt"
 
+$targetFrameworkFile = Join-Path (Split-Path $rootPath -Parent) "Authentication.TargetFramework.txt"
 if (-not (Test-Path $targetFrameworkFile))
 {
-    throw "Arquivo Authentication.TargetFramework.txt nao encontrado."
+    throw "Arquivo Servicos/Authentication.TargetFramework.txt nao encontrado."
 }
 
-$targetFramework =
-    (Get-Content $targetFrameworkFile -Raw).Trim()
+$targetFramework = (Get-Content $targetFrameworkFile -Raw).Trim()
 
-$tfMatch =
-    [regex]::Match(
-        $targetFramework,
-        '^net(\d+)\.0$'
-    )
+$tfMatch = [regex]::Match($targetFramework, '^net(\d+)\.0$')
 
 if (-not $tfMatch.Success)
 {
     throw "TargetFramework invalido: $targetFramework"
 }
 
-$frameworkMajor =
-    [int]$tfMatch.Groups[1].Value
+$frameworkMajor = [int]$tfMatch.Groups[1].Value
 
-$packageMajor =
-    ([regex]::Match(
-            $designPackage.Version,
-            '^(\d+)'
-        )).Groups[1].Value
-    
+$packageMajor = ([regex]::Match($designPackage.Version, '^(\d+)')).Groups[1].Value
 
-$toolMajor =
-    ([regex]::Match(
-            $efVersionMatch.Value,
-            '^(\d+)'
-        )).Groups[1].Value
-    
+$toolMajor = ([regex]::Match($efVersionMatch.Value, '^(\d+)')).Groups[1].Value
 
 if ($packageMajor -ne $frameworkMajor)
 {
@@ -135,9 +121,8 @@ if ($toolMajor -ne $frameworkMajor)
 
 Write-Host "Iniciando Fase 6: persistencia da Authentication..." -ForegroundColor Cyan
 
-# PASTAS
-
 $folders = @(
+    (Join-Path $rootPath "Authentication.Infrastructure\Configuration"),
     (Join-Path $rootPath "Authentication.Infrastructure\Persistence\Configurations"),
     (Join-Path $rootPath "Authentication.Infrastructure\Persistence\DesignTime"),
     (Join-Path $rootPath "Authentication.Infrastructure\Persistence\Extensions")
@@ -148,8 +133,6 @@ foreach ($folder in $folders) {
 }
 
 $generatedFiles = @()
-
-# USER CONFIGURATION
 
 $userConfiguration = @'
 using Authentication.Domain.Entities;
@@ -220,8 +203,6 @@ $generatedFiles += @{
     Content = $userConfiguration
 }
 
-# ROLE CONFIGURATION
-
 $roleConfiguration = @'
 using System.Collections.Generic;
 using Authentication.Domain.Entities;
@@ -282,8 +263,6 @@ $generatedFiles += @{
     Path = Join-Path $rootPath "Authentication.Infrastructure\Persistence\Configurations\RoleConfiguration.cs"
     Content = $roleConfiguration
 }
-
-# REFRESH TOKEN CONFIGURATION
 
 $refreshTokenConfiguration = @'
 using Authentication.Domain.Entities;
@@ -355,8 +334,6 @@ $generatedFiles += @{
     Content = $permissionConfiguration
 }
 
-# AUTHENTICATION DBCONTEXT
-
 $dbContext = @'
 using Authentication.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -391,33 +368,71 @@ $generatedFiles += @{
     Content = $dbContext
 }
 
-# DATABASE EXTENSIONS
+$databaseOptions = @'
+namespace Authentication.Infrastructure.Configuration;
+
+public sealed class DatabaseOptions
+{
+    public string Server { get; set; } = string.Empty;
+
+    public int Port { get; set; }
+
+    public string Database { get; set; } = string.Empty;
+}
+'@
+
+$generatedFiles += @{
+    Path = Join-Path $rootPath "Authentication.Infrastructure\Configuration\DatabaseOptions.cs"
+    Content = $databaseOptions
+}
+
+$rabbitMqOptions = @'
+namespace Authentication.Infrastructure.Configuration;
+
+public sealed class RabbitMqOptions
+{
+    public string Host { get; set; } = string.Empty;
+
+    public int Port { get; set; }
+
+    public string Username { get; set; } = string.Empty;
+    
+    public string Exchange { get; set; } = string.Empty;
+}
+'@
+
+$generatedFiles += @{
+    Path = Join-Path $rootPath "Authentication.Infrastructure\Configuration\RabbitMqOptions.cs"
+    Content = $rabbitMqOptions
+}
 
 $databaseExtensions = @'
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Authentication.Infrastructure.Configuration;
 
 namespace Authentication.Infrastructure.Persistence.Extensions;
 
 public static class DatabaseExtensions
 {
-    public static IServiceCollection AddDatabase(
-        this IServiceCollection services,
-        IConfiguration configuration)
+    public static IServiceCollection AddDatabase(this IServiceCollection services, IConfiguration configuration)
     {
-        var server = configuration["Database:Server"];
+        services.Configure<DatabaseOptions>(configuration.GetSection("Database"));
 
-        var port = configuration["Database:Port"];
+        var databaseOptions = configuration
+            .GetSection("Database")
+            .Get<DatabaseOptions>()
+                ?? throw new InvalidOperationException("Configuracao Database nao encontrada.");
 
-        var database = configuration["Database:Database"];
+        var server = databaseOptions.Server;
 
-        if (string.IsNullOrWhiteSpace(server)
-            || string.IsNullOrWhiteSpace(port)
-            || string.IsNullOrWhiteSpace(database))
-        {
-            throw new InvalidOperationException("As configurações 'Database:Server', 'Database:Port' e 'Database:Database' são obrigatórias.");
-        }
+        var port = databaseOptions.Port;
+
+        var database = databaseOptions.Database;
+
+        if (string.IsNullOrWhiteSpace(server) || port <= 0 || string.IsNullOrWhiteSpace(database))
+            throw new InvalidOperationException("As configuracoes de Database sao obrigatorias.");
 
         const string sqlPasswordSecretPath = "/run/secrets/sql_sa_password";
 
@@ -460,11 +475,10 @@ $generatedFiles += @{
     Content = $databaseExtensions
 }
 
-# DESIGN TIME FACTORY
-
 $factory = @'
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
+using Authentication.Infrastructure.Persistence;
 
 namespace Authentication.Infrastructure.Persistence.DesignTime;
 
@@ -496,8 +510,6 @@ $generatedFiles += @{
     Content = $factory
 }
 
-# BUILD
-
 foreach ($file in $generatedFiles) {
     if (-not (Test-Path -LiteralPath $file.Path)) {
         continue
@@ -527,15 +539,10 @@ $migrationsDirectory = Join-Path $rootPath "Authentication.Infrastructure\Persis
 
 if (-not (Test-Path $migrationsDirectory))
 {
-    New-Item `
-        -ItemType Directory `
-        -Force `
-        -Path $migrationsDirectory |
-    Out-Null
+    New-Item -ItemType Directory -Force -Path $migrationsDirectory | Out-Null
 }
 
-$initialMigration = Get-ChildItem -LiteralPath $migrationsDirectory -Filter "*_InitialCreate.cs" -File -ErrorAction SilentlyContinue |
-    Select-Object -First 1
+$initialMigration = Get-ChildItem -LiteralPath $migrationsDirectory -Filter "*_InitialCreate.cs" -File -ErrorAction SilentlyContinue | Select-Object -First 1
 
 if ($initialMigration) {
     Write-Host "Migration InitialCreate ja existe; nao sera sobrescrita." -ForegroundColor Gray
@@ -550,12 +557,7 @@ else {
         "--context", "AuthenticationDbContext"
     )
 
-    $createdMigration = Get-ChildItem `
-            -LiteralPath $migrationsDirectory `
-            -Filter "*_InitialCreate.cs" `
-            -File `
-            -ErrorAction SilentlyContinue |
-        Select-Object -First 1
+    $createdMigration = Get-ChildItem -LiteralPath $migrationsDirectory -Filter "*_InitialCreate.cs" -File -ErrorAction SilentlyContinue | Select-Object -First 1
 
     if (-not $createdMigration)
     {
