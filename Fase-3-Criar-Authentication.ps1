@@ -1,0 +1,416 @@
+# Cria a solução e os projetos do microsserviço Authentication
+
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+
+$rootPath = $PSScriptRoot
+$servicesPath = Join-Path $rootPath "Servicos"
+$serviceName = "Authentication"
+$servicePath = Join-Path $servicesPath $serviceName
+
+function Invoke-DotNet {
+
+    param(
+        [Parameter(Mandatory)]
+        [string[]]$Arguments
+    )
+
+    & dotnet @Arguments
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Falha ao executar: dotnet $($Arguments -join ' ')"
+    }
+}
+
+function Ensure-ProjectReference {
+
+    param(
+        [string]$Project,
+        [string]$Reference
+    )
+
+    $refs = dotnet list $Project reference
+
+    if ($LASTEXITCODE -ne 0)
+    {
+        throw "Falha ao listar referencias do projeto: $Project"
+    }
+
+    $referenceName = [System.IO.Path]::GetFileName($Reference)
+
+    if ($refs -notmatch [regex]::Escape($referenceName))
+    {
+        Invoke-DotNet -Arguments @(
+            "add",
+            $Project,
+            "reference",
+            $Reference
+        )
+    }
+}
+
+dotnet --info | Out-Null
+
+if ($LASTEXITCODE -ne 0)
+{
+    throw "SDK .NET nao esta disponivel."
+}
+
+function Get-LatestStableSdk {
+
+    $rawSdks = & dotnet --list-sdks
+
+    $stableSdks = @(
+        $rawSdks |
+        Where-Object {
+            $_ -notmatch 'preview|rc'
+        } |
+        ForEach-Object {
+
+            $versionText = ($_ -split '\s+')[0]
+
+            try {
+                [PSCustomObject]@{
+                    Version = [Version]$versionText
+                    Text    = $_
+                }
+            }
+            catch {
+            }
+        } |
+        Sort-Object Version -Descending
+    )
+
+    if ($stableSdks.Count -eq 0) {
+        throw "Nenhum SDK estavel encontrado."
+    }
+
+    return $stableSdks[0]
+}
+
+if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
+    throw "SDK .NET nao encontrado."
+}
+
+$latestSdk = Get-LatestStableSdk
+$majorVersion = $latestSdk.Version.Major
+$targetFramework = "net$majorVersion.0"
+
+Write-Host "SDK detectado: $($latestSdk.Version)" -ForegroundColor Green
+Write-Host "TargetFramework: $targetFramework" -ForegroundColor Green
+
+New-Item -ItemType Directory -Force -Path $servicesPath | Out-Null
+New-Item -ItemType Directory -Force -Path $servicePath | Out-Null
+
+Push-Location $servicePath
+
+try {
+
+    $solutionFile = Join-Path $servicePath "$serviceName.slnx"
+
+    if (-not (Test-Path $solutionFile)) {
+        Invoke-DotNet -Arguments @(
+            "new",
+            "sln",
+            "-n",
+            $serviceName,
+            "--format",
+            "slnx"
+        )
+    }
+    if (-not (Test-Path $solutionFile))
+    {
+        throw "Falha ao criar a solution."
+    }
+
+    $projects = @(
+        @{
+            Name = "Authentication.API"
+            Type = "webapi"
+        },
+        @{
+            Name = "Authentication.Application"
+            Type = "classlib"
+        },
+        @{
+            Name = "Authentication.Domain"
+            Type = "classlib"
+        },
+        @{
+            Name = "Authentication.Infrastructure"
+            Type = "classlib"
+        },
+        @{
+            Name = "Authentication.Tests"
+            Type = "xunit"
+        }
+    )
+
+    foreach ($project in $projects) {
+
+        $projectFolder = Join-Path $servicePath $project.Name
+
+        if (-not (Test-Path $projectFolder)) {
+
+            Invoke-DotNet -Arguments @(
+                "new",
+                $project.Type,
+                "-n",
+                $project.Name,
+                "-f",
+                $targetFramework
+            )
+        }
+    }
+
+    $projectFiles = @(
+        (Join-Path $servicePath "Authentication.API\Authentication.API.csproj"),
+        (Join-Path $servicePath "Authentication.Application\Authentication.Application.csproj"),
+        (Join-Path $servicePath "Authentication.Domain\Authentication.Domain.csproj"),
+        (Join-Path $servicePath "Authentication.Infrastructure\Authentication.Infrastructure.csproj"),
+        (Join-Path $servicePath "Authentication.Tests\Authentication.Tests.csproj")
+    )
+
+    foreach ($projectFile in $projectFiles) {
+
+        $projectName = [System.IO.Path]::GetFileNameWithoutExtension($projectFile)
+
+        $alreadyAdded = (& dotnet sln $solutionFile list) | Where-Object { $_ -match [regex]::Escape($projectName) }
+
+        if (-not $alreadyAdded) {
+
+            Invoke-DotNet -Arguments @(
+                "sln",
+                $solutionFile,
+                "add",
+                $projectFile
+            )
+        }
+    }
+
+    $templateFiles = @(
+        "Class1.cs",
+        "UnitTest1.cs",
+        "WeatherForecast.cs",
+        "WeatherForecastController.cs",
+        "Worker.cs"
+    )
+
+    Get-ChildItem -Path $servicePath -Recurse -File | Where-Object { $_.Name -in $templateFiles } | ForEach-Object {
+        Write-Host "Removendo arquivo padrao: $($_.FullName)" -ForegroundColor Yellow
+        Remove-Item -LiteralPath $_.FullName -Force
+    }
+
+    $apiPath = Join-Path $servicePath "Authentication.API"
+
+$appSettings = @'
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  },
+
+  "AllowedHosts": "*",
+
+  "Database": {
+    "Server": "",
+    "Port": 1433,
+    "Database": "Db_Authentication"
+  },
+
+  "RabbitMQ": {
+    "Host": "",
+    "Port": 5672,
+    "Username": ""
+  },
+
+  "Jwt": {
+    "Issuer": "Authentication",
+    "Audience": "SaaSEnterprise",
+    "ExpireMinutes": 60,
+    "RefreshTokenDays": 30
+  },
+
+  "HealthChecks": {
+    "Enabled": true,
+    "Path": "/health"
+  }
+}
+'@
+
+    Set-Content -Path (Join-Path $apiPath "appsettings.json") -Value $appSettings -Encoding UTF8
+
+$appSettingsDevelopment = @'
+{
+  "Database": {
+    "Server": "localhost"
+  },
+  "Logging": {
+    "LogLevel": {
+      "Default": "Debug",
+      "Microsoft.AspNetCore": "Information"
+    }
+  }
+}
+'@
+
+    Set-Content -Path (Join-Path $apiPath "appsettings.Development.json") -Value $appSettingsDevelopment -Encoding UTF8
+
+$appSettingsProduction = @'
+{
+  "Database": {
+    "Server": "sqlserver2022",
+    "Port": 1433,
+    "Database": "Db_Authentication"
+  },
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  }
+}
+'@
+
+    Set-Content -Path (Join-Path $apiPath "appsettings.Production.json") -Value $appSettingsProduction -Encoding UTF8
+
+$dockerfile = @"
+FROM mcr.microsoft.com/dotnet/aspnet:$majorVersion.0 AS base
+WORKDIR /app
+EXPOSE 8080
+FROM mcr.microsoft.com/dotnet/sdk:$majorVersion.0 AS build
+WORKDIR /src
+COPY . .
+RUN dotnet restore Authentication.API/Authentication.API.csproj
+RUN dotnet publish Authentication.API/Authentication.API.csproj -c Release -o /app/publish
+FROM base AS final
+WORKDIR /app
+COPY --from=build /app/publish .
+ENTRYPOINT ["dotnet", "Authentication.API.dll"]
+
+"@
+
+    Set-Content -Path (Join-Path $apiPath "Dockerfile") -Value $dockerfile -Encoding UTF8
+
+$dockerIgnore = @'
+bin
+obj
+.vs
+.git
+.gitignore
+Dockerfile*
+docker-compose*
+'@
+
+    Set-Content -Path (Join-Path $servicePath ".dockerignore") -Value $dockerIgnore -Encoding UTF8
+
+    Ensure-ProjectReference `
+        -Project (Join-Path $servicePath "Authentication.Application\Authentication.Application.csproj") `
+        -Reference (Join-Path $servicePath "Authentication.Domain\Authentication.Domain.csproj")
+
+    Ensure-ProjectReference `
+        -Project (Join-Path $servicePath "Authentication.Infrastructure\Authentication.Infrastructure.csproj") `
+        -Reference (Join-Path $servicePath "Authentication.Application\Authentication.Application.csproj")
+
+    Ensure-ProjectReference `
+        -Project (Join-Path $servicePath "Authentication.Infrastructure\Authentication.Infrastructure.csproj") `
+        -Reference (Join-Path $servicePath "Authentication.Domain\Authentication.Domain.csproj")
+
+    Ensure-ProjectReference `
+        -Project (Join-Path $servicePath "Authentication.API\Authentication.API.csproj") `
+        -Reference (Join-Path $servicePath "Authentication.Application\Authentication.Application.csproj")
+
+    Ensure-ProjectReference `
+        -Project (Join-Path $servicePath "Authentication.API\Authentication.API.csproj") `
+        -Reference (Join-Path $servicePath "Authentication.Infrastructure\Authentication.Infrastructure.csproj")
+
+    Ensure-ProjectReference `
+        -Project (Join-Path $servicePath "Authentication.Tests\Authentication.Tests.csproj") `
+        -Reference (Join-Path $servicePath "Authentication.Application\Authentication.Application.csproj")
+
+    $composeFile = Join-Path $servicePath "docker-compose.yml"
+
+    if (-not (Test-Path $composeFile))
+    {
+@"
+services:
+  api:
+    build:
+      target: development
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      Database__Server: ${SQL_CONTAINER:-sqlserver2022}
+      Database__Port: 1433
+      Database__Database: Db_Authentication
+      RabbitMQ__Host: ${RABBIT_CONTAINER:-rabbitmq}
+      RabbitMQ__Port: 5672
+      RabbitMQ__Username: ${SPRING_RABBITMQ_USERNAME:-admin_geral}
+      DOTNET_USE_POLLING_FILE_WATCHER: "1"
+    ports: !override
+      - "5001:8080"
+    volumes:
+      - .:/src
+      - api_obj:/src/Authentication.API/obj
+      - application_obj:/src/Authentication.Application/obj
+      - domain_obj:/src/Authentication.Domain/obj
+      - infrastructure_obj:/src/Authentication.Infrastructure/obj
+      - nuget_packages:/root/.nuget/packages
+
+secrets:
+  sql_sa_password:
+    file: ./secrets/sql_sa_password.txt
+    external: false
+  rabbitmq_password:
+    file: ./secrets/rabbitmq_password.txt
+    external: false
+  jwt_key:
+    file: ./secrets/jwt_key.txt
+    external: false
+
+volumes:
+  api_obj:
+  application_obj:
+  domain_obj:
+  infrastructure_obj:
+  nuget_packages:
+
+"@ |
+    Set-Content -Path $composeFile -Encoding UTF8
+    }
+
+    $frameworkFile = Join-Path $rootPath "Authentication.TargetFramework.txt"
+
+    Set-Content -Path $frameworkFile -Value $targetFramework -Encoding UTF8
+
+    $globalJsonPath = Join-Path $rootPath "global.json"
+    if (-not (Test-Path -LiteralPath $globalJsonPath)) {
+        @'
+{
+  "test": {
+    "runner": "Microsoft.Testing.Platform"
+  }
+}
+'@ | Set-Content -Path $globalJsonPath -Encoding UTF8
+    }
+ 
+    Write-Host "Restaurando solucao..." -ForegroundColor Yellow
+
+    Invoke-DotNet -Arguments @(
+        "restore",
+        $solutionFile
+    )
+
+    Write-Host "Compilando solucao..." -ForegroundColor Yellow
+
+    Invoke-DotNet -Arguments @(
+        "build",
+        $solutionFile
+    )
+
+    Write-Host "Essa Fase foi concluida com sucesso." -ForegroundColor Green
+}
+finally {
+    Pop-Location
+}
