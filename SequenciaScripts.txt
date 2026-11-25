@@ -1,0 +1,12 @@
+cd D:\Projetos\SaaS_Enterprise_Microsservicos\
+.\Fase-0-Cleanup.ps1
+.\Fase-1-Criar-Secrets.ps1
+.\Fase-2-Criar-Infrastructure.ps1
+.\Fase-3-Criar-Authentication.ps1
+.\Fase-4-Authentication-Packages.ps1
+.\Fase-5-Authentication-Core.ps1
+.\Fase-6-Authentication-Database.ps1
+.\Fase-7-Authentication-JWT.ps1
+.\Fase-8-Authentication-Seed.ps1
+.\Fase-9-Authentication-Login.ps1
+.\Fase-10-Authentication-ChangePassword.ps1
